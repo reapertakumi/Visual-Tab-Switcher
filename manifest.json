@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Visual Tab Switcher",
-  "version": "0.1",
-  "description": "Effortlessly navigate between tabs with keyboard shortcuts and visual previews",
+  "version": "0.2.0",
+  "description": "Switch tabs like Alt+Tab on Windows: visual previews, instant search and bookmark search.",
   "permissions": [
-    "activeTab",
     "tabs",
     "scripting",
     "storage",
-    "bookmarks"
+    "bookmarks",
+    "favicon"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -20,21 +20,21 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": ["styles.css"]
+      "run_at": "document_start"
     }
   ],
   "options_page": "settings.html",
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
-      "48": "icons/icon48.png", 
+      "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Quick Tab Switcher Settings"
+    "default_title": "Visual Tab Switcher settings"
   },
   "icons": {
     "16": "icons/icon16.png",
-    "48": "icons/icon48.png", 
+    "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
   "commands": {
@@ -42,18 +42,24 @@
       "suggested_key": {
         "default": "Alt+Q"
       },
-      "description": "Toggle Tab Switcher"
+      "description": "Open the tab switcher / select next tab"
+    },
+    "toggle-tab-switcher-reverse": {
+      "suggested_key": {
+        "default": "Alt+Shift+Q"
+      },
+      "description": "Open the tab switcher / select previous tab"
     },
     "search-mode": {
-      "description": "Search Mode"
+      "description": "Search tabs in all windows"
     },
     "bookmarks-mode": {
-      "description": "Bookmarks Mode"
+      "description": "Search bookmarks"
     }
   },
   "web_accessible_resources": [
     {
-      "resources": ["styles.css"],
+      "resources": ["_favicon/*"],
       "matches": ["<all_urls>"]
     }
   ]

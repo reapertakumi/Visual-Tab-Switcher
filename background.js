@@ -1,468 +1,635 @@
-// Track MRU (Most Recently Used) tab order
-let mruTabOrder = [];
-const MRU_CACHE_KEY = 'mruTabOrderV1';
+// Visual Tab Switcher — service worker
+// Keeps the most-recently-used (MRU) tab order, captures small preview
+// thumbnails, and answers the content script.
+//
+// Performance notes:
+//  * The switcher is opened with a tiny message (titles/urls only); it then
+//    asks for the previews of the cards it shows, so it appears immediately.
+//  * Each preview is stored under its own key ("s:<tabId>"), so a capture
+//    writes ~20 KB instead of rewriting the whole cache.
+//  * Waking the worker reads only the MRU list and a small preview index.
 
-// Persisted screenshot cache using local storage
-const SCREENSHOT_CACHE_KEY = 'tabScreenshotCacheV2';
-const MAX_SCREENSHOT_CACHE_ITEMS = 25;
-let tabScreenshotCache = new Map();
-const cacheInitPromise = loadScreenshotCache();
+'use strict';
 
-async function loadScreenshotCache() {
+const SETTINGS_KEY = 'tabSwitcherSettings';
+const MRU_KEY = 'mru';
+const INDEX_KEY = 'shotIdx';          // { [tabId]: [timestamp, url] }
+const SHOT_PREFIX = 's:';
+const MAX_SHOTS = 200;     // ~25 KB each → ~5 MB, well inside storage.local's 10 MB
+const THUMB_WIDTH = 480;
+const CAPTURE_GAP_MS = 550; // Chrome allows at most 2 captureVisibleTab calls per second
+const FRESH_MS = 3000;      // a preview younger than this is not retaken on Alt press
+const MAX_MRU = 500;
+
+const mem = {
+  mru: [],
+  index: {},              // tabId -> [ts, url]
+  shots: new Map(),       // tabId -> dataUrl (memory cache)
+  overlayTabs: new Set(), // tabs currently showing the switcher
+  lastShow: new Map(),    // tabId -> when the switcher was last opened there
+  bulk: null,             // running "capture all previews" job: { done, total, stop }
+  settings: null
+};
+
+// ---------------------------------------------------------------------------
+// Startup (kept small: this runs every time the worker wakes up)
+// ---------------------------------------------------------------------------
+
+const ready = (async () => {
+  const [session, local, tabs] = await Promise.all([
+    chrome.storage.session.get(MRU_KEY).catch(() => ({})),
+    chrome.storage.local.get(INDEX_KEY).catch(() => ({})),
+    chrome.tabs.query({}).catch(() => [])
+  ]);
+  const live = new Set(tabs.map(t => t.id));
+
+  const saved = Array.isArray(session[MRU_KEY]) ? session[MRU_KEY].filter(id => live.has(id)) : [];
+  const known = new Set(saved);
+  const rest = tabs
+    .filter(t => !known.has(t.id))
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+    .map(t => t.id);
+  mem.mru = [...saved, ...rest];
+  mem.index = local[INDEX_KEY] && typeof local[INDEX_KEY] === 'object' ? local[INDEX_KEY] : {};
+
+  // Tab ids change after a browser restart: re-link previews by URL (in the background).
+  const orphans = Object.keys(mem.index).filter(id => !live.has(Number(id)));
+  if (orphans.length) relinkOrphans(orphans, tabs);
+})();
+
+async function relinkOrphans(orphanIds, tabs) {
+  const byUrl = new Map();
+  for (const t of tabs) if (t.url && !mem.index[t.id] && !byUrl.has(t.url)) byUrl.set(t.url, t.id);
+  const keys = orphanIds.map(id => SHOT_PREFIX + id);
+  const data = await chrome.storage.local.get(keys).catch(() => ({}));
+  const toSet = {};
+  for (const id of orphanIds) {
+    const entry = mem.index[id];
+    const target = entry && byUrl.get(entry[1]);
+    const shot = data[SHOT_PREFIX + id];
+    delete mem.index[id];
+    if (target !== undefined && shot) {
+      byUrl.delete(entry[1]);
+      mem.index[target] = entry;
+      toSet[SHOT_PREFIX + target] = shot;
+    }
+  }
+  toSet[INDEX_KEY] = mem.index;
+  await chrome.storage.local.remove(keys).catch(() => {});
+  await chrome.storage.local.set(toSet).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Settings (cached in memory)
+// ---------------------------------------------------------------------------
+
+async function getSettings() {
+  if (mem.settings) return mem.settings;
   try {
-    const stored = await chrome.storage.local.get(SCREENSHOT_CACHE_KEY);
-    const entries = stored[SCREENSHOT_CACHE_KEY];
-    if (entries && typeof entries === 'object') {
-      Object.entries(entries).forEach(([id, entry]) => {
-        if (entry && entry.dataUrl) {
-          tabScreenshotCache.set(Number(id), entry);
-        }
-      });
-    }
-  } catch (error) {
-    console.warn('Failed to load screenshot cache', error);
+    const r = await chrome.storage.sync.get(SETTINGS_KEY);
+    mem.settings = r[SETTINGS_KEY] || {};
+  } catch (_) {
+    mem.settings = {};
   }
+  return mem.settings;
 }
 
-async function persistScreenshotCache() {
-  const plainObject = {};
-  for (const [id, entry] of tabScreenshotCache.entries()) {
-    plainObject[id] = entry;
-  }
-  try {
-    await chrome.storage.local.set({ [SCREENSHOT_CACHE_KEY]: plainObject });
-  } catch (error) {
-    console.warn('Failed to persist screenshot cache', error);
-  }
-}
-
-async function pruneScreenshotCache() {
-  if (tabScreenshotCache.size <= MAX_SCREENSHOT_CACHE_ITEMS) return;
-  const entries = Array.from(tabScreenshotCache.entries());
-  entries.sort((a, b) => (a[1].timestamp || 0) - (b[1].timestamp || 0));
-  while (tabScreenshotCache.size > MAX_SCREENSHOT_CACHE_ITEMS && entries.length) {
-    const [oldestId] = entries.shift();
-    tabScreenshotCache.delete(oldestId);
-  }
-  await persistScreenshotCache();
-}
-
-async function setScreenshot(tabId, dataUrl, url = null) {
-  await cacheInitPromise;
-  tabScreenshotCache.set(tabId, { dataUrl, timestamp: Date.now(), url });
-  await pruneScreenshotCache();
-  await persistScreenshotCache();
-}
-
-async function deleteScreenshot(tabId) {
-  await cacheInitPromise;
-  tabScreenshotCache.delete(tabId);
-  await persistScreenshotCache();
-}
-
-function getScreenshot(tabId, url = null) {
-  const entry = tabScreenshotCache.get(tabId);
-  if (entry && entry.dataUrl) {
-    return entry.dataUrl;
-  }
-
-  if (url) {
-    for (const [, cachedEntry] of tabScreenshotCache.entries()) {
-      if (cachedEntry.url === url && cachedEntry.dataUrl) {
-        return cachedEntry.dataUrl;
-      }
-    }
-  }
-
-  return null;
-}
-
-function isInternalPage(url = '') {
-  return url.startsWith('chrome://') ||
-         url.startsWith('brave://') ||
-         url.startsWith('helium://') ||
-         url.startsWith('edge://') ||
-         url.startsWith('vivaldi://') ||
-         url.startsWith('about:');
-}
-
-function isRestrictedUrl(url = '') {
-  return url.startsWith('chrome://') ||
-         url.startsWith('chrome-extension://') ||
-         url.startsWith('edge://') ||
-         url.startsWith('about:') ||
-         url.startsWith('devtools://');
-}
-
-// Track if switcher is currently visible
-let switcherVisible = false;
-
-// Screenshot capture system
-let captureInProgress = false;
-let pendingCaptureTimeout = null;
-
-async function captureScreenshot(tabId, windowId) {
-  if (captureInProgress || switcherVisible) return;
-  captureInProgress = true;
-  try {
-    const [currentActiveTab] = await chrome.tabs.query({ active: true, windowId });
-    if (!currentActiveTab || currentActiveTab.id !== tabId) return;
-
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab || isRestrictedUrl(tab.url)) return;
-
-    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
-      format: 'jpeg',
-      quality: 80
-    });
-    await setScreenshot(tabId, dataUrl, tab.url);
-  } catch (error) {
-    // Ignore errors for restricted pages
-  } finally {
-    captureInProgress = false;
-  }
-}
-
-function scheduleCaptureScreenshot(tabId, windowId, delay = 500) {
-  if (pendingCaptureTimeout) {
-    clearTimeout(pendingCaptureTimeout);
-  }
-  pendingCaptureTimeout = setTimeout(() => {
-    pendingCaptureTimeout = null;
-    captureScreenshot(tabId, windowId);
-  }, delay);
-}
-
-async function loadMRUOrder() {
-  try {
-    const stored = await chrome.storage.session.get(MRU_CACHE_KEY);
-    const savedOrder = stored[MRU_CACHE_KEY];
-    if (Array.isArray(savedOrder)) {
-      mruTabOrder = savedOrder;
-    }
-  } catch (error) {
-    console.warn('Failed to load MRU order', error);
-  }
-}
-
-async function persistMRUOrder() {
-  try {
-    await chrome.storage.session.set({ [MRU_CACHE_KEY]: mruTabOrder });
-  } catch (error) {
-    console.warn('Failed to persist MRU order', error);
-  }
-}
-
-// Sort tabs by MRU order
-function sortTabsByMRU(tabs) {
-  const tabMap = new Map(tabs.map(tab => [tab.id, tab]));
-  const sortedTabs = [];
-  const addedIds = new Set();
-  
-  for (const tabId of mruTabOrder) {
-    if (tabMap.has(tabId)) {
-      sortedTabs.push(tabMap.get(tabId));
-      addedIds.add(tabId);
-    }
-  }
-  
-  for (const tab of tabs) {
-    if (!addedIds.has(tab.id)) {
-      sortedTabs.push(tab);
-    }
-  }
-  
-  return sortedTabs;
-}
-
-// Check if content script is loaded and inject if needed
-async function ensureContentScript(tabId) {
-  try {
-    await chrome.tabs.sendMessage(tabId, { action: "ping" });
-    return true;
-  } catch (error) {
-    // Content script not loaded, inject it
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        files: ['content.js']
-      });
-      await new Promise(resolve => setTimeout(resolve, 50));
-      return true;
-    } catch (injectError) {
-      console.error("Failed to inject content script:", injectError);
-      return false;
-    }
-  }
-}
-
-// Toggle the tab switcher with direction
-async function toggleTabSwitcher(direction = "forward") {
-  try {
-    await cacheInitPromise; // ensure screenshot cache restored before building UI
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    if (!tab || !tab.id) {
-      console.warn("No active tab found");
-      return;
-    }
-    
-    const isLoaded = await ensureContentScript(tab.id);
-    if (!isLoaded) {
-      console.error("Could not load content script");
-      return;
-    }
-    
-    // Get hideInternalPages setting
-    const settings = await chrome.storage.sync.get(['tabSwitcherSettings']);
-    const hideInternalPages = settings.tabSwitcherSettings?.hideInternalPages || false;
-    
-    const allTabs = await chrome.tabs.query({ currentWindow: true });
-    const sortedTabs = sortTabsByMRU(allTabs);
-    
-    // Filter out internal pages if setting is enabled
-    const filteredTabs = hideInternalPages
-      ? sortedTabs.filter(tab => !isInternalPage(tab.url))
-      : sortedTabs;
-    
-    // Optimization: Only send top 20 tabs to avoid massive payload with screenshots
-    const tabsToSend = filteredTabs.slice(0, 20);
-    
-    // Attach cached screenshots to tabs
-    const tabsWithScreenshots = tabsToSend.map(t => ({
-      ...t,
-      screenshot: getScreenshot(t.id, t.url) || null
-    }));
-    
-    try {
-      await chrome.tabs.sendMessage(tab.id, {
-        action: "toggleSwitcher",
-        tabs: tabsWithScreenshots,
-        currentTabId: tab.id,
-        direction: direction
-      });
-    } catch (messageError) {
-      console.error("Could not send message to tab:", messageError);
-    }
-  } catch (error) {
-    console.error("Error toggling tab switcher:", error);
-  }
-}
-
-chrome.commands.onCommand.addListener(async (command) => {
-  console.log('Command received:', command);
-  if (command === 'toggle-tab-switcher') {
-    toggleTabSwitcher("forward"); // Ctrl+Shift+Q opens switcher going forward
-  } else if (command === 'search-mode') {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) return;
-    try {
-      await chrome.tabs.sendMessage(tab.id, { action: 'openDirectSearch' });
-    } catch (e) {
-      // Content script not loaded; inject and retry once
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ['content.js']
-        });
-        await chrome.tabs.sendMessage(tab.id, { action: 'openDirectSearch' });
-      } catch (injectErr) {
-        console.error('Failed to open direct search:', injectErr);
-      }
-    }
-  } else if (command === 'bookmarks-mode') {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) return;
-    try {
-      await chrome.tabs.sendMessage(tab.id, { action: 'openDirectBookmarks' });
-    } catch (e) {
-      // Content script not loaded; inject and retry once
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ['content.js']
-        });
-        await chrome.tabs.sendMessage(tab.id, { action: 'openDirectBookmarks' });
-      } catch (injectErr) {
-        console.error('Failed to open direct bookmarks:', injectErr);
-      }
-    }
-  }
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes[SETTINGS_KEY]) mem.settings = changes[SETTINGS_KEY].newValue || {};
 });
 
-// Listen for tab activation to maintain MRU order
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  const tabId = activeInfo.tabId;
-  mruTabOrder = mruTabOrder.filter(id => id !== tabId);
-  mruTabOrder.unshift(tabId);
-  if (mruTabOrder.length > 100) {
-    mruTabOrder = mruTabOrder.slice(0, 100);
+// ---------------------------------------------------------------------------
+// MRU
+// ---------------------------------------------------------------------------
+
+let mruTimer = null;
+
+function touch(tabId) {
+  const i = mem.mru.indexOf(tabId);
+  if (i === 0) return;
+  if (i !== -1) mem.mru.splice(i, 1);
+  mem.mru.unshift(tabId);
+  if (mem.mru.length > MAX_MRU) mem.mru.length = MAX_MRU;
+  persistMru();
+}
+
+function persistMru() {
+  clearTimeout(mruTimer);
+  mruTimer = setTimeout(() => chrome.storage.session.set({ [MRU_KEY]: mem.mru }).catch(() => {}), 300);
+}
+
+function sortByMru(tabs) {
+  const rank = new Map();
+  mem.mru.forEach((id, i) => rank.set(id, i));
+  return tabs.sort((a, b) => {
+    const ra = rank.has(a.id) ? rank.get(a.id) : Infinity;
+    const rb = rank.has(b.id) ? rank.get(b.id) : Infinity;
+    return ra !== rb ? ra - rb : (b.lastAccessed || 0) - (a.lastAccessed || 0);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Previews
+// ---------------------------------------------------------------------------
+
+const captureTimers = new Map();
+let indexTimer = null;
+
+function persistIndex() {
+  clearTimeout(indexTimer);
+  indexTimer = setTimeout(() => chrome.storage.local.set({ [INDEX_KEY]: mem.index }).catch(() => {}), 500);
+}
+
+// Pages the browser never lets an extension capture: don't bother retrying.
+function isUncapturable(url = '') {
+  return /^(chrome|edge|brave|vivaldi|opera|about|chrome-extension|devtools|view-source|chrome-search):/i.test(url) ||
+    /^https:\/\/(chrome\.google\.com\/webstore|chromewebstore\.google\.com|microsoftedge\.microsoft\.com\/addons)/i.test(url);
+}
+
+// Debounced per window: only the tab you settle on gets captured.
+function scheduleCapture(windowId, delay, opts = {}) {
+  clearTimeout(captureTimers.get(windowId));
+  captureTimers.set(windowId, setTimeout(() => {
+    captureTimers.delete(windowId);
+    capture(windowId, opts);
+  }, delay));
+}
+
+// All captures go through one queue spaced CAPTURE_GAP_MS apart, so we never
+// hit Chrome's 2-per-second limit (which used to silently drop previews).
+let captureQueue = Promise.resolve();
+let lastCaptureAt = 0;
+
+function capture(windowId, opts = {}) {
+  captureQueue = captureQueue.then(() => doCapture(windowId, opts)).catch(() => {});
+  return captureQueue;
+}
+
+async function doCapture(windowId, { force = false, attempt = 0, onlyTabId = null, ifOlderThan = 0 } = {}) {
+  let tab;
+  try { [tab] = await chrome.tabs.query({ active: true, windowId }); } catch (_) { return; }
+  if (!tab || tab.discarded || mem.overlayTabs.has(tab.id) || isUncapturable(tab.url)) return;
+  if (onlyTabId !== null && tab.id !== onlyTabId) return;
+  if (ifOlderThan) {
+    const entry = mem.index[tab.id];
+    if (entry && entry[1] === tab.url && Date.now() - entry[0] < ifOlderThan) return; // still fresh
   }
-  persistMRUOrder();
 
-  // Capture screenshot of newly active tab after a delay
-  scheduleCaptureScreenshot(tabId, activeInfo.windowId, 800);
-});
-
-// Listen for tab removal to clean up MRU list and cache
-chrome.tabs.onRemoved.addListener((tabId) => {
-  mruTabOrder = mruTabOrder.filter(id => id !== tabId);
-  persistMRUOrder();
-  deleteScreenshot(tabId);
-});
-
-// Listen for tab updates (URL changes, page load completion)
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  // Capture screenshot when page finishes loading and tab is active
-  if (changeInfo.status === 'complete' && tab.active && tab.windowId !== undefined) {
-    scheduleCaptureScreenshot(tabId, tab.windowId, 500);
-  }
-});
-
-// Handle window focus changes
-chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+  // Still loading: try again shortly; after a few tries take what's there.
+  if (tab.status !== 'complete' && !force && attempt < 3) {
+    scheduleCapture(windowId, 1500, { attempt: attempt + 1 });
     return;
   }
-  chrome.tabs.query({ active: true, windowId: windowId }).then(tabs => {
-    if (tabs.length > 0) {
-      const tabId = tabs[0].id;
-      mruTabOrder = mruTabOrder.filter(id => id !== tabId);
-      mruTabOrder.unshift(tabId);
-      persistMRUOrder();
-    }
-  });
-});
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "switchToTab") {
-    chrome.tabs.update(request.tabId, { active: true })
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  } else if (request.action === "closeTab") {
-    chrome.tabs.remove(request.tabId)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  } else if (request.action === "openBookmark") {
-    chrome.tabs.create({ url: request.url })
-      .then((tab) => sendResponse({ success: true, tabId: tab.id }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true;
-  } else if (request.action === "switcherShown") {
-    // Switcher is now visible - don't capture screenshots
-    switcherVisible = true;
-    sendResponse({ success: true });
-  } else if (request.action === "getAllTabs") {
-    // Get all tabs and current tab for direct search
-    chrome.storage.sync.get(['tabSwitcherSettings'], (result) => {
-      const settings = result.tabSwitcherSettings || {};
-      const hideInternalPages = settings.hideInternalPages || false;
-      
-      chrome.tabs.query({}, (tabs) => {
-        // Filter out internal pages if setting is enabled
-        let filteredTabs = tabs;
-        if (hideInternalPages) {
-          filteredTabs = tabs.filter(tab => !isInternalPage(tab.url));
+  const win = await chrome.windows.get(windowId).catch(() => null);
+  // Minimized or covered windows aren't painted, so their screenshots come out
+  // blank: only capture the window you're actually looking at.
+  if (!win || win.state === 'minimized' || !win.focused) return;
+
+  const wait = lastCaptureAt + CAPTURE_GAP_MS - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  if (mem.overlayTabs.has(tab.id) || Date.now() - (mem.lastShow.get(tab.id) || 0) < 1500) return; // switcher is up
+
+  let dataUrl;
+  const startedAt = Date.now();
+  try {
+    lastCaptureAt = startedAt;
+    dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 70 });
+  } catch (_) {
+    // Usually a transient failure (window busy, rate limit): retry a couple of times.
+    if (attempt < 2) scheduleCapture(windowId, 1000, { force, attempt: attempt + 1 });
+    return;
+  }
+  const finishedAt = Date.now();
+  if (!dataUrl) return;
+
+  // You may have switched tabs (or opened the switcher) while capturing:
+  // never store a screenshot under the wrong tab.
+  const [after] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
+  if (!after || after.id !== tab.id || mem.overlayTabs.has(tab.id)) return;
+  // The switcher was asked to open before this capture finished: it might be
+  // in the picture. (A capture that finished first — e.g. the one taken when
+  // Alt went down — is clean and kept.)
+  const shownAt = mem.lastShow.get(tab.id) || 0;
+  if (shownAt && shownAt <= finishedAt && finishedAt - shownAt < 1500) return;
+
+  try { dataUrl = await shrink(dataUrl); } catch (_) { /* keep original */ }
+
+  mem.shots.set(tab.id, dataUrl);
+  mem.index[tab.id] = [Date.now(), tab.url || ''];
+  const removed = pruneShots();
+  chrome.storage.local.set({ [SHOT_PREFIX + tab.id]: dataUrl, [INDEX_KEY]: mem.index }).catch(() => {});
+  if (removed.length) chrome.storage.local.remove(removed.map(id => SHOT_PREFIX + id)).catch(() => {});
+}
+
+function pruneShots() {
+  const ids = Object.keys(mem.index);
+  if (ids.length <= MAX_SHOTS) return [];
+  ids.sort((a, b) => mem.index[a][0] - mem.index[b][0]);
+  const removed = ids.slice(0, ids.length - MAX_SHOTS);
+  for (const id of removed) { delete mem.index[id]; mem.shots.delete(Number(id)); }
+  return removed;
+}
+
+function dropShot(tabId) {
+  mem.shots.delete(tabId);
+  if (mem.index[tabId]) {
+    delete mem.index[tabId];
+    persistIndex();
+    chrome.storage.local.remove(SHOT_PREFIX + tabId).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "Capture all previews now"
+// ---------------------------------------------------------------------------
+// The browser can only screenshot the tab that is on screen, so this briefly
+// shows every tab once, captures it, and then puts everything back exactly as
+// it was: the same tab in front in every window, the same window focused, the
+// same most-recently-used order, and tabs that were unloaded ("discarded") to
+// save memory are unloaded again. After that, each preview stays cached until
+// you use the tab, and is re-captured every time you do.
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function waitForLoad(tabId, timeout = 8000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    if (!t) return false;
+    if (t.status === 'complete') return true;
+    await sleep(200);
+  }
+  return true; // capture whatever is there
+}
+
+function reportBulk() {
+  const b = mem.bulk;
+  chrome.runtime.sendMessage({ action: 'captureProgress', done: b ? b.done : 0, total: b ? b.total : 0, running: !!b }).catch(() => {});
+}
+
+async function captureAllTabs() {
+  if (mem.bulk) return;
+  await ready;
+  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+  const focused = windows.find(w => w.focused) || windows[0];
+  const restore = windows.map(w => ({ windowId: w.id, tabId: (w.tabs.find(t => t.active) || {}).id }));
+  const mruBefore = mem.mru.slice();
+
+  // Every capturable tab, starting with the focused window.
+  const ordered = [...windows].sort((a, b) => (b === focused) - (a === focused));
+  const todo = [];
+  for (const w of ordered) for (const t of w.tabs) if (!isUncapturable(t.url || t.pendingUrl)) todo.push(t);
+
+  const job = { done: 0, total: todo.length, stop: false };
+  mem.bulk = job;
+  reportBulk();
+  const rediscard = [];
+  try {
+    for (const t of todo) {
+      if (job.stop) break;
+      const tab = await chrome.tabs.get(t.id).catch(() => null);
+      if (tab) {
+        if (tab.discarded) rediscard.push(tab.id);
+        const win = await chrome.windows.get(tab.windowId).catch(() => null);
+        if (win && (!win.focused || win.state === 'minimized')) {
+          await chrome.windows.update(tab.windowId, { focused: true, ...(win.state === 'minimized' ? { state: 'normal' } : {}) }).catch(() => {});
         }
-        
-        chrome.tabs.query({ active: true, currentWindow: true }, (currentTab) => {
-          const currentTabId = currentTab.length > 0 ? currentTab[0].id : null;
-          sendResponse({ 
-            tabs: filteredTabs,
-            currentTabId: currentTabId
-          });
-        });
-      });
-    });
-    return true;
-  } else if (request.action === "getAllBookmarks") {
-    // Get all bookmarks tree
-    chrome.bookmarks.getTree((bookmarkTree) => {
-      const bookmarks = [];
-      
-      function flattenBookmarks(nodes, path = []) {
-        for (const node of nodes) {
-          if (node.url) {
-            const folderPath = path.join('/') || 'Bookmarks';
-            bookmarks.push({
-              id: node.id,
-              title: node.title || node.url,
-              url: node.url,
-              path: folderPath,
-              pathArray: [...path]
-            });
-          }
-          if (node.children) {
-            // Only include folders that contain bookmarks
-            const childPath = [...path, node.title || 'Folder'];
-            flattenBookmarks(node.children, childPath);
-          }
-        }
+        await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+        await waitForLoad(tab.id);
+        await sleep(300); // let the page paint
+        await capture(tab.windowId, { force: true, onlyTabId: tab.id });
       }
-      
-      flattenBookmarks(bookmarkTree);
-      sendResponse({ bookmarks: bookmarks });
-    });
-    return true;
-  } else if (request.action === "switcherHidden") {
-    // Switcher is now hidden - can capture screenshots again
-    switcherVisible = false;
-
-    // Capture screenshot of the newly active tab after switcher is hidden
-    if (sender.tab && sender.tab.id) {
-      chrome.tabs.get(sender.tab.id).then(tab => {
-        if (tab && tab.active) {
-          scheduleCaptureScreenshot(sender.tab.id, tab.windowId, 500);
-        }
-      }).catch(() => {});
+      job.done++;
+      reportBulk();
     }
-    sendResponse({ success: true });
+  } finally {
+    // Put everything back.
+    for (const r of restore) {
+      if (r.tabId !== undefined) await chrome.tabs.update(r.tabId, { active: true }).catch(() => {});
+    }
+    if (focused) await chrome.windows.update(focused.id, { focused: true }).catch(() => {});
+    for (const id of rediscard) await chrome.tabs.discard(id).catch(() => {});
+    await sleep(300); // let the activation events from restoring arrive (ignored while bulk is set)
+    const live = new Set((await chrome.tabs.query({}).catch(() => [])).map(t => t.id));
+    const before = new Set(mruBefore);
+    // Same recent-tabs order as before; tabs opened meanwhile go first, closed ones are dropped.
+    mem.mru = [...mem.mru.filter(id => !before.has(id) && live.has(id)), ...mruBefore.filter(id => live.has(id))];
+    persistMru();
+    mem.bulk = null;
+    reportBulk();
   }
+}
+
+async function shrink(dataUrl) {
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const scale = Math.min(1, THUMB_WIDTH / bitmap.width);
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = new OffscreenCanvas(w, h);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.72 });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return 'data:image/jpeg;base64,' + btoa(bin);
+}
+
+async function getShots(tabIds) {
+  const out = {};
+  const missing = [];
+  for (const id of tabIds) {
+    if (mem.shots.has(id)) out[id] = mem.shots.get(id);
+    else if (mem.index[id]) missing.push(id);
+  }
+  if (missing.length) {
+    const data = await chrome.storage.local.get(missing.map(id => SHOT_PREFIX + id)).catch(() => ({}));
+    for (const id of missing) {
+      const d = data[SHOT_PREFIX + id];
+      if (d) { mem.shots.set(id, d); out[id] = d; }
+    }
+  }
+  return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isInternalPage(url = '') {
+  return /^(chrome|brave|edge|vivaldi|opera|helium|about|chrome-extension|devtools|view-source):/i.test(url);
+}
+
+// Most recently used tabs from every normal browser window. Incognito and
+// regular tabs are never mixed. Each tab gets its window's number (1, 2, …)
+// so the switcher can show which window it lives in.
+async function buildTabList(currentTab) {
+  const currentTabId = currentTab ? currentTab.id : null;
+  const [settings, tabs, windows] = await Promise.all([
+    getSettings(),
+    chrome.tabs.query({}),
+    chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => [])
+  ]);
+  const incognito = currentTab ? !!currentTab.incognito : false;
+  const windowNo = new Map(
+    windows.filter(w => !!w.incognito === incognito).sort((a, b) => a.id - b.id).map((w, i) => [w.id, i + 1])
+  );
+  if (currentTab && !windowNo.has(currentTab.windowId)) windowNo.set(currentTab.windowId, windowNo.size + 1);
+
+  let list = sortByMru(tabs.filter(t => windowNo.has(t.windowId) && !!t.incognito === incognito));
+  const ci = list.findIndex(t => t.id === currentTabId);
+  if (ci > 0) list.unshift(list.splice(ci, 1)[0]);
+  if (settings.hideInternalPages) {
+    list = list.filter(t => t.id === currentTabId || !isInternalPage(t.url || t.pendingUrl));
+  }
+  const max = parseInt(settings.maxTabs, 10);
+  if (max > 0) list = list.slice(0, max);
+  return list.map(t => ({
+    id: t.id,
+    windowId: t.windowId,
+    win: windowNo.get(t.windowId),
+    title: t.title || '',
+    url: t.url || t.pendingUrl || '',
+    favIconUrl: t.favIconUrl || '',
+    pinned: t.pinned,
+    audible: t.audible && !(t.mutedInfo && t.mutedInfo.muted)
+  }));
+}
+
+async function sendToTab(tabId, message) {
+  try { return (await chrome.tabs.sendMessage(tabId, message)) ?? null; } catch (_) { return null; }
+}
+
+async function injectContentScript(tabId) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function resolveTab(tab) {
+  if (tab && tab.id >= 0) return tab;
+  const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return t || null;
+}
+
+function activateTab(tabId, windowId) {
+  chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  if (windowId !== undefined) chrome.windows.update(windowId, { focused: true }).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+async function openSwitcher(direction, fromTab) {
+  const tab = await resolveTab(fromTab);
+  if (!tab) return;
+
+  // Already open: just move the selection (no tab list needed).
+  if (mem.overlayTabs.has(tab.id)) {
+    const r = await sendToTab(tab.id, { action: 'cycle', direction });
+    if (r && r.handled) return;
+  }
+
+  await ready;
+  mem.lastShow.set(tab.id, Date.now()); // a capture running right now could include the overlay
+  const tabs = await buildTabList(tab);
+  const msg = { action: 'show', tabs, currentTabId: tab.id, currentWindowId: tab.windowId, direction };
+  let shown = await sendToTab(tab.id, msg);
+  if (!shown && (await injectContentScript(tab.id))) shown = await sendToTab(tab.id, msg);
+  if (!shown) return quickSwitch(tab, tabs, direction); // page can't host the overlay (chrome://, Web Store…)
+}
+
+function quickSwitch(tab, tabs, direction) {
+  if (tabs.length < 2) return;
+  const target = direction === 'backward' ? tabs[tabs.length - 1] : tabs.find(t => t.id !== tab.id);
+  if (target) activateTab(target.id, target.windowId);
+}
+
+async function openDirect(kind, fromTab) {
+  const tab = await resolveTab(fromTab);
+  if (!tab) return;
+  const action = kind === 'bookmarks' ? 'openBookmarks' : 'openSearch';
+  const r = await sendToTab(tab.id, { action });
+  if (!r && (await injectContentScript(tab.id))) sendToTab(tab.id, { action });
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (mem.bulk) { mem.bulk.stop = true; return; } // any shortcut stops "capture all"
+  if (command === 'toggle-tab-switcher') openSwitcher('forward', tab);
+  else if (command === 'toggle-tab-switcher-reverse') openSwitcher('backward', tab);
+  else if (command === 'search-mode') openDirect('search', tab);
+  else if (command === 'bookmarks-mode') openDirect('bookmarks', tab);
 });
 
-// Open options page when extension icon is clicked
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
+// ---------------------------------------------------------------------------
+// Messages from the content script
+// ---------------------------------------------------------------------------
+
+// Flattens the bookmark tree in its real order (exactly as on the bookmark
+// bar: folders and bookmarks interleaved, each folder followed by its
+// contents). `parent` is the parent folder's id, `segs` the folder chain,
+// e.g. ["Bookmarks bar", "Work"]. `barId` is the bookmark bar's folder id.
+function flattenBookmarks(tree) {
+  const out = [];
+  const root = tree && tree[0];
+  const walk = (node, segs) => {
+    let count = 0;
+    for (const c of node.children || []) {
+      if (c.url) {
+        if (/^javascript:/i.test(c.url)) continue; // bookmarklets can't be opened from here
+        out.push({ id: c.id, parent: node.id, title: c.title || c.url, url: c.url, segs, path: segs.join(' / ') });
+        count++;
+      } else {
+        const title = c.title || 'Folder';
+        const entry = { id: 'f' + c.id, folder: true, parent: node.id, title, url: '', segs, path: segs.join(' / '), count: 0 };
+        out.push(entry);
+        entry.count = walk(c, [...segs, title]);
+        count += entry.count;
+      }
+    }
+    return count;
+  };
+  if (root) walk(root, []);
+  const bar = root && root.children && root.children[0];
+  return { bookmarks: out, barId: bar ? bar.id : null, rootId: root ? root.id : null };
+}
+
+const handlers = {
+  async getTabs(msg, sender) {
+    await ready;
+    const tab = sender.tab || null;
+    const tabs = await buildTabList(tab);
+    return { tabs, currentTabId: tab ? tab.id : null, currentWindowId: tab ? tab.windowId : null };
+  },
+  // The overlay asks only for the previews of the cards it is showing.
+  async getShots(msg) {
+    await ready;
+    const settings = await getSettings();
+    if (settings.showPreviews === false || !Array.isArray(msg.ids)) return { shots: {} };
+    return { shots: await getShots(msg.ids.slice(0, 40)) };
+  },
+  async getBookmarks() {
+    return flattenBookmarks(await chrome.bookmarks.getTree());
+  },
+  activateTab(msg) {
+    activateTab(msg.tabId, msg.windowId);
+    return { ok: true };
+  },
+  async closeTab(msg) {
+    await chrome.tabs.remove(msg.tabId);
+    return { ok: true };
+  },
+  async openUrl(msg, sender) {
+    const props = { url: msg.url, active: true };
+    if (sender.tab) { props.windowId = sender.tab.windowId; props.index = sender.tab.index + 1; }
+    await chrome.tabs.create(props);
+    return { ok: true };
+  },
+  // Settings → "Capture all previews now".
+  captureAll() {
+    captureAllTabs(); // runs in the background; progress arrives as captureProgress messages
+    return { ok: true };
+  },
+  captureAllStop() {
+    if (mem.bulk) mem.bulk.stop = true;
+    return { ok: true };
+  },
+  captureAllStatus() {
+    return { running: !!mem.bulk, done: mem.bulk ? mem.bulk.done : 0, total: mem.bulk ? mem.bulk.total : 0 };
+  },
+  // Alt was just pressed (probably about to press Q): grab a fresh screenshot
+  // of the tab you're leaving while the page is still clean.
+  prepare(msg, sender) {
+    if (sender.tab && sender.tab.active) {
+      capture(sender.tab.windowId, { force: true, onlyTabId: sender.tab.id, ifOlderThan: FRESH_MS });
+    }
+    return { ok: true };
+  },
+  overlayState(msg, sender) {
+    if (!sender.tab) return { ok: true };
+    if (msg.visible) {
+      mem.overlayTabs.add(sender.tab.id);
+    } else {
+      mem.overlayTabs.delete(sender.tab.id);
+      mem.lastShow.delete(sender.tab.id); // overlay is gone: the page is clean again
+      if (sender.tab.active) scheduleCapture(sender.tab.windowId, 300);
+    }
+    return { ok: true };
+  }
+};
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return false;
+  const handler = msg && handlers[msg.action];
+  if (!handler) return false;
+  Promise.resolve()
+    .then(() => handler(msg, sender))
+    .then(res => sendResponse(res ?? { ok: true }), err => sendResponse({ ok: false, error: String(err && err.message || err) }));
+  return true;
 });
 
-// Open settings page on first install
-chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install') {
-    chrome.runtime.openOptionsPage();
-  }
+// ---------------------------------------------------------------------------
+// Tab / window events
+// ---------------------------------------------------------------------------
+
+chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+  await ready;
+  if (mem.bulk) return; // "capture all" is flipping through tabs: not real use
+  touch(tabId);
+  scheduleCapture(windowId, 250);
 });
 
-// Initialize MRU list when extension loads
-Promise.all([loadMRUOrder(), cacheInitPromise, chrome.tabs.query({})]).then(([_, __, tabs]) => {
-  const allTabIds = new Set(tabs.map(t => t.id));
-  let validMru = mruTabOrder.filter(id => allTabIds.has(id));
-  
-  const activeTabs = tabs.filter(t => t.active);
-  const activeTabIds = new Set(activeTabs.map(t => t.id));
-
-  if (validMru.length === 0) {
-     validMru = [...activeTabIds, ...tabs.filter(t => !activeTabIds.has(t.id)).map(t => t.id)];
-  } else {
-     validMru = validMru.filter(id => !activeTabIds.has(id));
-     validMru = [...activeTabIds, ...validMru];
-     
-     const knownIds = new Set(validMru);
-     const unknownTabs = tabs.filter(t => !knownIds.has(t.id)).map(t => t.id);
-     validMru = [...validMru, ...unknownTabs];
-  }
-  
-  mruTabOrder = validMru;
-  persistMRUOrder();
-  
-  // Capture screenshot of currently active tab in focused window
-  const activeTab = tabs.find(t => t.active && t.windowId);
-  if (activeTab) {
-    scheduleCaptureScreenshot(activeTab.id, activeTab.windowId, 500);
-  }
-}).catch(error => {
-  console.error('MRU initialization failed:', error);
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status === 'loading') mem.overlayTabs.delete(tabId);
+  if (!tab.active || mem.bulk) return;
+  if (info.status === 'complete') scheduleCapture(tab.windowId, 500);
+  // Single-page apps (YouTube, Gmail…) change the URL without reloading.
+  else if (info.url && tab.status === 'complete') scheduleCapture(tab.windowId, 1000);
 });
 
+chrome.tabs.onRemoved.addListener(async tabId => {
+  await ready;
+  const i = mem.mru.indexOf(tabId);
+  if (i !== -1) { mem.mru.splice(i, 1); persistMru(); }
+  mem.overlayTabs.delete(tabId);
+  mem.lastShow.delete(tabId);
+  dropShot(tabId);
+});
+
+chrome.tabs.onReplaced.addListener(async (added, removed) => {
+  await ready;
+  const i = mem.mru.indexOf(removed);
+  if (i !== -1) { mem.mru[i] = added; persistMru(); }
+  dropShot(removed);
+});
+
+chrome.windows.onFocusChanged.addListener(async windowId => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  await ready;
+  if (mem.bulk) return;
+  const [tab] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
+  if (tab) touch(tab.id);
+  scheduleCapture(windowId, 400, { ifOlderThan: 10000 });
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+
+chrome.runtime.onInstalled.addListener(async details => {
+  if (details.reason === 'install') chrome.runtime.openOptionsPage();
+  // Drop the old single-blob caches from previous versions.
+  chrome.storage.local.remove(['tabScreenshotCacheV2', 'tabScreenshotCacheV3']).catch(() => {});
+  chrome.storage.session.remove(['mruTabOrderV1', 'mruTabOrderV2']).catch(() => {});
+  // Make the switcher work in tabs that were already open.
+  const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*', 'file:///*'] }).catch(() => []);
+  for (const tab of tabs) if (!tab.discarded) injectContentScript(tab.id);
+});

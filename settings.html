@@ -1,645 +1,593 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visual Tab Switcher Settings</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visual Tab Switcher Settings</title>
+  <style>
+    :root {
+      --accent: #3b82f6;
+      --bg: #f3f3f3;
+      --nav-hover: rgba(0, 0, 0, .04);
+      --nav-active: rgba(0, 0, 0, .06);
+      --card: rgba(255, 255, 255, .78);
+      --card-hover: rgba(255, 255, 255, .95);
+      --stroke: rgba(0, 0, 0, .07);
+      --stroke-hi: rgba(0, 0, 0, .16);
+      --text: #1a1a1a;
+      --text-2: rgba(0, 0, 0, .62);
+      --text-3: rgba(0, 0, 0, .45);
+      --control: #ffffff;
+      --control-hover: #f9f9f9;
+      --icon-bg: rgba(0, 0, 0, .04);
+      --kbd: #ffffff;
+    }
+    body.dark {
+      --bg: #202020;
+      --nav-hover: rgba(255, 255, 255, .05);
+      --nav-active: rgba(255, 255, 255, .08);
+      --card: rgba(255, 255, 255, .05);
+      --card-hover: rgba(255, 255, 255, .08);
+      --stroke: rgba(255, 255, 255, .06);
+      --stroke-hi: rgba(255, 255, 255, .16);
+      --text: #ffffff;
+      --text-2: rgba(255, 255, 255, .72);
+      --text-3: rgba(255, 255, 255, .5);
+      --control: rgba(255, 255, 255, .06);
+      --control-hover: rgba(255, 255, 255, .09);
+      --icon-bg: rgba(255, 255, 255, .06);
+      --kbd: rgba(255, 255, 255, .07);
+    }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #f5f5f5;
-            color: #333;
-            height: 100vh;
-            display: flex;
-        }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { color-scheme: light; }
+    body.dark { color-scheme: dark; }
+    body {
+      font: 14px/1.43 "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+    }
+    svg { flex: none; }
 
-        .sidebar {
-            width: 240px;
-            background: #2c2c2e;
-            padding: 20px 0;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
+    /* ---------- Navigation ---------- */
+    .sidebar {
+      width: 280px;
+      flex: none;
+      padding: 20px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; padding: 4px 12px 22px; }
+    .brand img { width: 40px; height: 40px; border-radius: 10px; }
+    .brand-name { font-size: 15px; font-weight: 600; }
+    .brand-sub { font-size: 12px; color: var(--text-3); }
+    .nav-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      height: 40px;
+      padding: 0 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      color: var(--text);
+    }
+    .nav-item svg { color: var(--text-2); }
+    .nav-item:hover { background: var(--nav-hover); }
+    .nav-item.active { background: var(--nav-active); font-weight: 600; }
+    .nav-item.active::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 12px;
+      bottom: 12px;
+      width: 3px;
+      border-radius: 3px;
+      background: var(--accent);
+    }
+    .sidebar-foot { margin-top: auto; padding: 12px 14px 0; font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 8px; }
+    .sidebar-foot svg { color: var(--accent); }
+    #status { color: var(--accent); font-weight: 600; }
 
-        .sidebar-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 0 24px 20px 24px;
-            border-bottom: 1px solid #444;
-            margin-bottom: 20px;
-        }
+    /* ---------- Content ---------- */
+    main { flex: 1; min-width: 0; padding: 28px 40px 48px 16px; overflow-y: auto; }
+    .content { max-width: 860px; }
+    .section { display: none; }
+    .section.active { display: block; animation: enter .2s cubic-bezier(.16, 1, .3, 1); }
+    @keyframes enter { from { opacity: 0; transform: translateY(6px); } }
+    h1 { font-size: 28px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 4px; }
+    .lead { color: var(--text-2); margin-bottom: 26px; }
+    h2 { font-size: 14px; font-weight: 600; margin: 24px 0 8px; }
 
-        .sidebar-icon {
-            width: 32px;
-            height: 32px;
-            border-radius: 6px;
-        }
+    .cards { display: flex; flex-direction: column; gap: 3px; }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-height: 68px;
+      padding: 14px 18px;
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 6px;
+      transition: background-color .1s;
+    }
+    .row:hover { background: var(--card-hover); }
+    .row-icon {
+      display: grid;
+      place-items: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--icon-bg);
+      color: var(--text-2);
+      flex: none;
+    }
+    .label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .name { font-weight: 400; }
+    .desc { font-size: 12px; color: var(--text-2); margin-top: 1px; }
+    .control { display: flex; align-items: center; gap: 12px; flex: none; }
 
-        .sidebar-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #ffffff;
-        }
+    /* Combo box */
+    .select { position: relative; }
+    .select::after {
+      content: "";
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      width: 6px;
+      height: 6px;
+      margin-top: -5px;
+      border-right: 1.5px solid var(--text-2);
+      border-bottom: 1.5px solid var(--text-2);
+      transform: rotate(45deg);
+      pointer-events: none;
+    }
+    select {
+      appearance: none;
+      font: inherit;
+      color: var(--text);
+      min-width: 170px;
+      height: 32px;
+      padding: 0 34px 0 11px;
+      border-radius: 5px;
+      border: 1px solid var(--stroke-hi);
+      border-bottom-color: var(--stroke-hi);
+      background: var(--control);
+      cursor: pointer;
+    }
+    select:hover { background: var(--control-hover); }
+    select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    select option { background: var(--bg); color: var(--text); }
 
-        .save-section {
-            margin-top: auto;
-            padding: 20px;
-            border-top: 1px solid #444;
-            position: sticky;
-            bottom: 0;
-        }
+    /* Slider */
+    input[type="range"] { accent-color: var(--accent); width: 180px; cursor: pointer; }
+    .value { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
 
-        .sidebar-item {
-            padding: 12px 24px;
-            cursor: pointer;
-            color: #999;
-            transition: all 0.2s ease;
-            border-left: 3px solid transparent;
-            font-size: 14px;
-            font-weight: 500;
-        }
+    /* Toggle switch (Windows 11 style) */
+    .switch { display: inline-flex; align-items: center; gap: 12px; cursor: pointer; user-select: none; }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .state { min-width: 24px; text-align: right; color: var(--text-2); }
+    .state::after { content: "Off"; }
+    .track {
+      position: relative;
+      width: 40px;
+      height: 20px;
+      border-radius: 10px;
+      border: 1px solid var(--text-2);
+      transition: background-color .12s, border-color .12s;
+    }
+    .track::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--text-2);
+      transition: transform .16s cubic-bezier(.16, 1, .3, 1), background-color .12s;
+    }
+    .switch:hover .track::after { transform: scale(1.12); }
+    .switch input:checked ~ .track { background: var(--accent); border-color: var(--accent); }
+    .switch input:checked ~ .track::after { background: #fff; transform: translateX(20px); }
+    .switch:hover input:checked ~ .track::after { transform: translateX(20px) scale(1.12); }
+    .switch input:checked ~ .state::after { content: "On"; }
+    .switch input:focus-visible ~ .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-        .sidebar-item:hover {
-            background: rgba(255, 255, 255, 0.05);
-            color: #fff;
-        }
+    /* Keys & buttons */
+    kbd {
+      display: inline-flex;
+      align-items: center;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 5px;
+      font: 600 12px/1 "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
+      background: var(--kbd);
+      border: 1px solid var(--stroke-hi);
+      border-bottom-width: 2px;
+      white-space: nowrap;
+    }
+    /* ---------- Style preview ---------- */
+    .preview {
+      --pv-surface: 32,32,32; --pv-surface-hi: 44,44,44; --pv-text: rgba(255,255,255,.85); --pv-mute: rgba(255,255,255,.35);
+      --pv-scrim: rgba(0,0,0,.42); --pv-alpha: 1; --r-panel: 14px; --r-card: 10px; --r-thumb: 6px;
+      position: relative; height: 210px; margin-bottom: 8px; border-radius: 8px; overflow: hidden;
+      border: 1px solid var(--stroke); display: grid; place-items: center;
+    }
+    .preview.light { --pv-surface: 249,249,249; --pv-surface-hi: 255,255,255; --pv-text: rgba(0,0,0,.8); --pv-mute: rgba(0,0,0,.25); --pv-scrim: rgba(0,0,0,.2); }
+    .preview.dim-none { --pv-scrim: transparent; }
+    .preview.dim-light { --pv-scrim: rgba(0,0,0,.15); }
+    .preview.light.dim-light { --pv-scrim: rgba(0,0,0,.08); }
+    .preview.dim-strong { --pv-scrim: rgba(0,0,0,.66); }
+    .preview.light.dim-strong { --pv-scrim: rgba(0,0,0,.42); }
+    .preview.corners-square { --r-panel: 5px; --r-card: 3px; --r-thumb: 2px; }
+    .preview.corners-round { --r-panel: 22px; --r-card: 15px; --r-thumb: 10px; }
+    .pv-page { position: absolute; inset: 0; background: linear-gradient(135deg, #1e3a8a, #7c3aed 45%, #db2777 80%, #f59e0b); }
+    .pv-blob { position: absolute; border-radius: 50%; filter: blur(2px); }
+    .pv-blob.b1 { width: 160px; height: 160px; left: 6%; top: -30px; background: #22d3ee; }
+    .pv-blob.b2 { width: 120px; height: 120px; right: 10%; bottom: -20px; background: #facc15; }
+    .pv-blob.b3 { width: 90px; height: 90px; left: 48%; top: 40%; background: #34d399; }
+    .pv-lines { position: absolute; left: 24px; top: 22px; display: flex; flex-direction: column; gap: 9px; }
+    .pv-lines i { display: block; height: 7px; width: 220px; border-radius: 4px; background: rgba(255,255,255,.75); }
+    .pv-lines i:nth-child(2n) { width: 160px; }
+    .pv-scrim { position: absolute; inset: 0; background: var(--pv-scrim); }
+    .preview.blur-bg .pv-scrim { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+    .pv-panel {
+      position: relative; padding: 12px; border-radius: var(--r-panel);
+      background: linear-gradient(180deg, rgba(var(--pv-surface-hi), var(--pv-alpha)), rgba(var(--pv-surface), var(--pv-alpha)) 40px);
+      border: 1px solid rgba(255,255,255,.12); box-shadow: 0 20px 44px rgba(0,0,0,.45);
+    }
+    .preview.translucent .pv-panel { -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); }
+    .pv-cards { display: flex; gap: 8px; }
+    .pv-card { width: 112px; padding: 6px; border-radius: var(--r-card); }
+    .pv-card.sel { background: rgba(128,128,128,.14); box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent); }
+    .pv-head { display: flex; align-items: center; gap: 6px; height: 14px; margin-bottom: 6px; }
+    .pv-head b { width: 10px; height: 10px; border-radius: 3px; background: var(--pv-mute); }
+    .pv-head span { height: 6px; width: 60px; border-radius: 3px; background: var(--pv-mute); }
+    .pv-thumb { height: 64px; border-radius: var(--r-thumb); }
+    .pv-thumb.t1 { background: linear-gradient(160deg, #e2e8f0 0 30%, #94a3b8 30%); }
+    .pv-thumb.t2 { background: linear-gradient(160deg, #fecaca 0 30%, #ef4444 30%); }
+    .pv-thumb.t3 { background: linear-gradient(160deg, #bbf7d0 0 30%, #10b981 30%); }
+    .pv-caption { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 10px; }
+    .pv-caption span { height: 7px; width: 120px; border-radius: 4px; background: var(--pv-text); opacity: .8; }
+    .pv-caption i { height: 5px; width: 80px; border-radius: 3px; background: var(--pv-mute); }
+    .preview.anim .pv-card.sel { animation: pv-pulse 2.4s ease-in-out infinite; }
+    @keyframes pv-pulse { 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 7px color-mix(in srgb, var(--accent) 14%, transparent); } }
+    .row.disabled { opacity: .5; }
+    .row.disabled input { pointer-events: none; }
 
-        .sidebar-item.active {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-            border-left-color: var(--active-accent, #3b82f6);
-        }
+    .progress { height: 4px; margin-top: 10px; border-radius: 2px; background: var(--stroke-hi); overflow: hidden; max-width: 360px; }
+    .progress-bar { height: 100%; width: 0; border-radius: 2px; background: var(--accent); transition: width .2s; }
+    #captureText { min-width: 0; white-space: nowrap; }
+    .shortcut-key { cursor: pointer; transition: background-color .1s, border-color .1s, color .1s; }
+    .shortcut-key:hover { color: var(--accent); border-color: var(--accent); }
+    .shortcut-key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn {
+      font: inherit;
+      height: 32px;
+      padding: 0 14px;
+      border-radius: 5px;
+      border: 1px solid var(--stroke-hi);
+      background: var(--control);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .btn:hover { background: var(--control-hover); }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-        /* Dark mode styles */
-        body.dark-mode {
-            background: #1a1a1a;
-            color: #e0e0e0;
-        }
+    .keys {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 3px;
+    }
+    .key-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--card);
+      border: 1px solid var(--stroke);
+      border-radius: 6px;
+    }
+    .key-row span { color: var(--text-2); font-size: 13px; }
+    .note { font-size: 12px; color: var(--text-2); margin-top: 10px; }
 
-        body.dark-mode .main-content {
-            background: #1a1a1a;
-        }
-
-        body.dark-mode .section-title {
-            color: #f0f0f0;
-        }
-
-        body.dark-mode .section-description {
-            color: #aaa;
-        }
-
-        body.dark-mode .settings-group {
-            background: #252525;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-        }
-
-        body.dark-mode .settings-group-title {
-            color: #f0f0f0;
-        }
-
-        body.dark-mode .setting-item {
-            border-bottom-color: #333;
-        }
-
-        body.dark-mode .setting-name {
-            color: #e0e0e0;
-        }
-
-        body.dark-mode .setting-description {
-            color: #999;
-        }
-
-        body.dark-mode select,
-        body.dark-mode input[type="range"] {
-            background: #333;
-            border-color: #444;
-            color: #e0e0e0;
-        }
-
-        body.dark-mode .hotkey-info {
-            background: #252525;
-            color: #e0e0e0;
-        }
-
-        body.dark-mode .hotkey-info strong {
-            color: #e0e0e0;
-        }
-
-        body.dark-mode .tab-count-badge {
-            color: #e0e0e0;
-        }
-
-        body.dark-mode .reload-note {
-            color: #999;
-        }
-
-        .main-content {
-            flex: 1;
-            display: flex;
-            gap: 30px;
-            padding: 40px;
-            overflow-y: auto;
-        }
-
-        .settings-content {
-            flex: 1;
-            max-width: 600px;
-        }
-
-        
-        .section {
-            display: none;
-        }
-
-        .section.active {
-            display: block;
-        }
-
-        .section-header {
-            margin-bottom: 30px;
-        }
-
-        .section-title {
-            font-size: 28px;
-            font-weight: 600;
-            color: #1a1a1a;
-            margin-bottom: 8px;
-        }
-
-        .section-description {
-            font-size: 16px;
-            color: #666;
-            line-height: 1.5;
-        }
-
-        .settings-group {
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 20px;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-
-        .settings-group-title {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            color: #1a1a1a;
-        }
-
-        .setting-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid #f0f0f0;
-        }
-
-        .setting-item:last-child {
-            border-bottom: none;
-        }
-
-        .setting-label {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .setting-name {
-            font-size: 14px;
-            font-weight: 500;
-            color: #333;
-            margin-bottom: 4px;
-        }
-
-        .setting-description {
-            font-size: 12px;
-            color: #666;
-            line-height: 1.4;
-        }
-
-        .setting-control {
-            display: flex;
-            align-items: center;
-        }
-
-        select, input[type="range"] {
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 14px;
-            background: white;
-            color: #333;
-        }
-
-        input[type="range"] {
-            accent-color: var(--active-accent, #3b82f6);
-        }
-
-        input[type="range"]::-webkit-slider-thumb {
-            background: var(--active-accent, #3b82f6);
-        }
-
-        input[type="range"]::-moz-range-thumb {
-            background: var(--active-accent, #3b82f6);
-        }
-
-        .scale-value {
-            display: inline-block;
-            min-width: 40px;
-            text-align: right;
-            color: #000;
-            font-weight: 600;
-        }
-
-        body.dark-mode .scale-value {
-            color: #e0e0e0;
-        }
-
-        select {
-            min-width: 120px;
-            cursor: pointer;
-        }
-
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 44px;
-            height: 24px;
-        }
-
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .2s;
-            border-radius: 24px;
-        }
-
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px;
-            width: 18px;
-            left: 3px;
-            bottom: 3px;
-            background-color: white;
-            transition: .2s;
-            border-radius: 50%;
-        }
-
-        input:checked + .slider {
-            background-color: var(--active-accent, #3b82f6);
-        }
-
-        input:checked + .slider:before {
-            transform: translateX(20px);
-        }
-
-        
-        
-        .save-btn {
-            background: var(--active-accent, #3b82f6);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s ease;
-        }
-
-        .save-btn:hover {
-            filter: brightness(0.9);
-        }
-
-        .reload-note {
-            margin-left: 12px;
-            font-size: 12px;
-            color: #888;
-            font-style: italic;
-        }
-
-        .status {
-            margin-top: 12px;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            display: none;
-        }
-
-        .status.success {
-            background: #d1fae5;
-            color: #065f46;
-            border: 1px solid #a7f3d0;
-        }
-
-        body.dark-mode .status.success {
-            background: #064e3b;
-            color: #d1fae5;
-            border: 1px solid #047857;
-        }
-
-        .status.error {
-            background: #fee2e2;
-            color: #991b1b;
-            border: 1px solid #fecaca;
-        }
-
-        .hotkey-info {
-            background: #f8f9fa;
-            padding: 12px;
-            border-radius: 6px;
-            margin-top: 8px;
-            font-size: 13px;
-            color: #666;
-        }
-
-        .hotkey {
-            font-family: monospace;
-            background: #e9ecef;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-weight: 600;
-            color: #495057;
-            font-size: 2em;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .hotkey:hover {
-            color: var(--active-accent, #3b82f6);
-            background: var(--active-accent, #3b82f6);
-            background: color-mix(in srgb, var(--active-accent, #3b82f6) 20%, transparent);
-        }
-    </style>
+    @media (max-width: 760px) {
+      body { flex-direction: column; }
+      .sidebar { width: 100%; height: auto; position: static; flex-direction: row; flex-wrap: wrap; padding: 12px; }
+      .brand { width: 100%; padding-bottom: 8px; }
+      .sidebar-foot { display: none; }
+      main { padding: 8px 16px 32px; }
+      .row { flex-wrap: wrap; }
+      .control { width: 100%; justify-content: flex-end; }
+    }
+    @media (prefers-reduced-motion: reduce) { .section.active { animation: none; } }
+  </style>
 </head>
 <body>
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <img src="icons/icon128.png" alt="Quick Tab Switcher" class="sidebar-icon">
-            <span class="sidebar-title">Visual Tab Switcher</span>
-        </div>
-        <div class="sidebar-item active" data-section="general">Tab Switcher</div>
-        <div class="sidebar-item" data-section="tab-search">Tab Search</div>
-        <div class="sidebar-item" data-section="bookmark-search">Bookmark Search</div>
-        
-        <div class="save-section">
-            <button class="save-btn" id="saveBtn">Save Settings</button>
-            <span class="reload-note" style="color: var(--active-accent, #3b82f6);">(requires browser restart)</span>
-            <div class="status" id="status"></div>
-        </div>
+  <nav class="sidebar">
+    <div class="brand">
+      <img src="icons/icon128.png" alt="">
+      <div>
+        <div class="brand-name">Visual Tab Switcher</div>
+        <div class="brand-sub">Settings</div>
+      </div>
     </div>
-
-    <div class="main-content">
-        <div class="settings-content">
-        <!-- General Section -->
-        <div class="section active" id="general">
-            <div class="section-header">
-                <h1 class="section-title">Tab Switcher</h1>
-                <p class="section-description">Basic settings for the tab switcher</p>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Tab Switcher</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Tab Switcher hotkey</span>
-                        <span class="setting-description">Key to activate Tab Switcher</span>
-                    </div>
-                    <div class="setting-control">
-                        <span class="hotkey" id="tabSwitcherHotkey">Ctrl+Shift+Q</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Appearance</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Theme</span>
-                        <span class="setting-description">Choose color theme</span>
-                    </div>
-                    <div class="setting-control">
-                        <select id="theme">
-                            <option value="system">System</option>
-                            <option value="light">Light</option>
-                            <option value="dark">Dark</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Highlight color</span>
-                        <span class="setting-description">Color for selected tab</span>
-                    </div>
-                    <div class="setting-control">
-                        <select id="highlightColor">
-                            <option value="#3b82f6">Blue</option>
-                            <option value="#ef4444">Red</option>
-                            <option value="#10b981">Green</option>
-                            <option value="#f59e0b">Orange</option>
-                            <option value="#8b5cf6">Purple</option>
-                            <option value="#ec4899">Pink</option>
-                            <option value="#14b8a6">Teal</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Tab title layout</span>
-                        <span class="setting-description">Position of icon and title</span>
-                    </div>
-                    <div class="setting-control">
-                        <select id="tabTitleLayout">
-                            <option value="header">Header</option>
-                            <option value="footer">Footer</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Display</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Number of tabs to display</span>
-                        <span class="setting-description">How many tabs to show in the switcher</span>
-                    </div>
-                    <div class="setting-control">
-                        <select id="tabCount">
-                            <option value="4">4 Tabs</option>
-                            <option value="5">5 Tabs</option>
-                            <option value="6">6 Tabs</option>
-                            <option value="7">7 Tabs</option>
-                            <option value="8">8 Tabs</option>
-                            <option value="9">9 Tabs</option>
-                            <option value="10">10 Tabs</option>
-                            <option value="11">11 Tabs</option>
-                            <option value="12">12 Tabs</option>
-                            <option value="auto" selected>Auto</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Show previews</span>
-                        <span class="setting-description">Display tab preview screenshots</span>
-                    </div>
-                    <div class="setting-control">
-                        <label class="switch">
-                            <input type="checkbox" id="previewToggle" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Preview scale</span>
-                        <span class="setting-description">Scale the tab preview size</span>
-                    </div>
-                    <div class="setting-control">
-                        <input type="range" id="scaleSlider" min="80" max="150" value="100" step="10">
-                        <span class="scale-value" id="scaleValue">100%</span>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Hide internal pages</span>
-                        <span class="setting-description">Hide internal pages (chrome://, brave://, edge://, vivaldi://, helium://, about:) from switcher</span>
-                    </div>
-                    <div class="setting-control">
-                        <label class="switch">
-                            <input type="checkbox" id="hideInternalPages">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab Search Section -->
-        <div class="section" id="tab-search">
-            <div class="section-header">
-                <h1 class="section-title">Tab Search</h1>
-                <p class="section-description">Configure Tab search functionality</p>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Search Settings</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Enable Direct Tab Search</span>
-                        <span class="setting-description">Allows to search through your open tabs without opening Tab Switcher</span>
-                    </div>
-                    <div class="setting-control">
-                        <label class="switch">
-                            <input type="checkbox" id="directSearch" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Tab Search hotkey</span>
-                        <span class="setting-description">Key to activate Tab Search</span>
-                    </div>
-                    <div class="setting-control">
-                        <select id="searchHotkey">
-                            <option value="F2">F2</option>
-                            <option value="F4">F4</option>
-                            <option value="F8">F8</option>
-                            <option value="F9">F9</option>
-                            <option value="custom">Custom</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Tab Search Navigation</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Searching</span>
-                        <span class="setting-description">Tab Switcher then opening Tab Search results into searching Tabs within Window</span>
-                        <span class="setting-description">Opening Direct Tab Search results into searching Tabs across all Windows</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bookmark Search Section -->
-        <div class="section" id="bookmark-search">
-            <div class="section-header">
-                <h1 class="section-title">Bookmark Search</h1>
-                <p class="section-description">Configure bookmark search functionality</p>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Bookmark Settings</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Enable Bookmark Search</span>
-                        <span class="setting-description">Allows to search through your bookmarks</span>
-                    </div>
-                    <div class="setting-control">
-                        <label class="switch">
-                            <input type="checkbox" id="directBookmarks" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Bookmark Search Hotkey</span>
-                        <span class="setting-description">Key to open bookmark search</span>
-                    </div>
-                    <div class="setting-control">
-                        <select id="bookmarksHotkey">
-                            <option value="F2">F2</option>
-                            <option value="F4" selected>F4</option>
-                            <option value="F8">F8</option>
-                            <option value="F9">F9</option>
-                            <option value="custom">Custom</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <h2 class="settings-group-title">Folder Navigation</h2>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span class="setting-name">Path syntax</span>
-                        <span class="setting-description">Use /foldername to search within specific folders</span>
-                    </div>
-                    <div class="setting-control">
-                        <span style="color: #666; font-size: 13px;">Supported</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        </div>
+    <div class="nav-item active" data-section="general">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="3" width="4" height="10" rx="1"/><rect x="6.5" y="3" width="4" height="10" rx="1"/><rect x="11.5" y="3" width="3" height="10" rx="1"/></svg>
+      Tab Switcher
     </div>
+    <div class="nav-item" data-section="tab-search">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><circle cx="7" cy="7" r="5"/><path d="M10.7 10.7 14.3 14.3"/></svg>
+      Tab Search
+    </div>
+    <div class="nav-item" data-section="bookmark-search">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M4 1.8h8v12.4L8 11.2l-4 3z"/></svg>
+      Bookmark Search
+    </div>
+    <div class="sidebar-foot">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4.5"/></svg>
+      <span>Changes save automatically</span>
+      <span id="status" role="status"></span>
+    </div>
+  </nav>
 
-    <script src="settings.js"></script>
+  <main>
+    <div class="content">
+
+      <!-- ===================== Tab Switcher ===================== -->
+      <section class="section active" id="general">
+        <h1>Tab Switcher</h1>
+        <p class="lead">Works like Alt+Tab: hold the modifier, tap the key to move, release to switch.</p>
+
+        <h2>Shortcuts</h2>
+        <div class="cards">
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M3 8h9M9 5l3 3-3 3"/></svg></div>
+            <div class="label"><span class="name">Open switcher / next tab</span><span class="desc">Keep holding the modifier and press the key again to move forward</span></div>
+            <div class="control"><kbd class="shortcut-key" id="shortcutForward" data-open-shortcuts title="Change on the extensions shortcuts page" role="button" tabindex="0">Alt+Q</kbd></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M13 8H4M7 5 4 8l3 3"/></svg></div>
+            <div class="label"><span class="name">Previous tab</span><span class="desc">Move backward through the switcher</span></div>
+            <div class="control"><kbd class="shortcut-key" id="shortcutBackward" data-open-shortcuts title="Change on the extensions shortcuts page" role="button" tabindex="0">Alt+Shift+Q</kbd></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 6.5h1M7 6.5h1M10 6.5h2M4.5 9.5h7"/></svg></div>
+            <div class="label"><span class="name">Change shortcuts</span><span class="desc">Browser shortcuts are managed on the extensions shortcuts page</span></div>
+            <div class="control"><button class="btn" data-open-shortcuts>Open shortcuts</button></div>
+          </div>
+        </div>
+
+        <h2>While the switcher is open</h2>
+        <div class="keys">
+          <div class="key-row"><kbd>Release Alt</kbd><span>Switch to the selected tab</span></div>
+          <div class="key-row"><kbd>Q</kbd><kbd>Tab</kbd><span>Next tab</span></div>
+          <div class="key-row"><kbd>← →</kbd><span>Move the selection</span></div>
+          <div class="key-row"><kbd>F2</kbd><span>Search tabs in this window</span></div>
+          <div class="key-row"><kbd>F4</kbd><span>Search bookmarks</span></div>
+          <div class="key-row"><kbd>Enter</kbd><span>Switch to the selected tab</span></div>
+          <div class="key-row"><kbd>Delete</kbd><span>Close the selected tab</span></div>
+          <div class="key-row"><kbd>Esc</kbd><span>Cancel</span></div>
+        </div>
+        <p class="note">Mouse: hovering a tab brightens it and shows its ✕ without changing the selection. Click to switch, click ✕ or middle-click to close, scroll the wheel to see more tabs.</p>
+
+        <h2>Appearance</h2>
+        <div class="cards">
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor"/></svg></div>
+            <div class="label"><span class="name">Theme</span><span class="desc">Color mode of the switcher and this page</span></div>
+            <div class="control"><div class="select"><select id="theme">
+              <option value="system">Use system setting</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M8 1.8C4.5 1.8 1.8 4.4 1.8 7.7c0 3 2.4 5.2 4.6 5.2 1 0 1.3-.7 1.3-1.3 0-1 .7-1.6 1.7-1.6h1.4c1.9 0 3.4-1.4 3.4-3.3 0-2.7-2.8-4.9-6.2-4.9z"/><circle cx="5" cy="7" r=".8" fill="currentColor"/><circle cx="8" cy="4.8" r=".8" fill="currentColor"/><circle cx="11" cy="6.4" r=".8" fill="currentColor"/></svg></div>
+            <div class="label"><span class="name">Accent color</span><span class="desc">Highlight around the selected tab</span></div>
+            <div class="control"><div class="select"><select id="highlightColor">
+              <option value="#3b82f6">Blue</option>
+              <option value="#0078d4">Windows blue</option>
+              <option value="#8b5cf6">Purple</option>
+              <option value="#ec4899">Pink</option>
+              <option value="#ef4444">Red</option>
+              <option value="#f59e0b">Orange</option>
+              <option value="#10b981">Green</option>
+              <option value="#14b8a6">Teal</option>
+              <option value="#e5e5e5">White</option>
+            </select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 6.5h1M7 6.5h1M10 6.5h2M4.5 9.5h7"/></svg></div>
+            <div class="label"><span class="name">Show keyboard hints</span><span class="desc">The row of key hints at the bottom of the switcher, search and bookmarks</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="showHints"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 5.5h12"/></svg></div>
+            <div class="label"><span class="name">Tab title position</span><span class="desc">Show the icon and title above or below the preview</span></div>
+            <div class="control"><div class="select"><select id="tabTitleLayout">
+              <option value="header">Above preview</option>
+              <option value="footer">Below preview</option>
+            </select></div></div>
+          </div>
+        </div>
+
+        <h2>Style</h2>
+        <!-- Live preview of the switcher with the current style settings -->
+        <div class="preview" id="stylePreview" aria-hidden="true">
+          <div class="pv-page">
+            <div class="pv-blob b1"></div><div class="pv-blob b2"></div><div class="pv-blob b3"></div>
+            <div class="pv-lines"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="pv-scrim"></div>
+          <div class="pv-panel">
+            <div class="pv-cards">
+              <div class="pv-card"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t1"></div></div>
+              <div class="pv-card sel"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t2"></div></div>
+              <div class="pv-card"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t3"></div></div>
+            </div>
+            <div class="pv-caption"><span></span><i></i></div>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 3v10M8 3v10M11 3v10" opacity=".45"/></svg></div>
+            <div class="label"><span class="name">Translucent panel</span><span class="desc">See-through, blurred glass like Windows 11 and macOS. Uses a little more graphics power.</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="translucent"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row" id="opacityRow">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M8 2v12" /><path d="M8 4.5h4M8 7h5.5M8 9.5h5M8 12h3" opacity=".5"/></svg></div>
+            <div class="label"><span class="name">Panel opacity</span><span class="desc">How see-through the translucent panel is</span></div>
+            <div class="control">
+              <input type="range" id="panelOpacity" min="30" max="100" step="5">
+              <span class="value" id="panelOpacityValue">75%</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 5h12M2 8h12M2 11h12" stroke-dasharray="1.5 2"/></svg></div>
+            <div class="label"><span class="name">Blur page behind</span><span class="desc">Softly blur the web page behind the switcher</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="blurBackground"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor" opacity=".5"/></svg></div>
+            <div class="label"><span class="name">Background dim</span><span class="desc">How much the page behind the switcher is darkened</span></div>
+            <div class="control"><div class="select"><select id="dim">
+              <option value="none">None</option>
+              <option value="light">Light</option>
+              <option value="medium">Medium</option>
+              <option value="strong">Strong</option>
+            </select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2.5 13.5V7a4.5 4.5 0 0 1 4.5-4.5h6.5"/></svg></div>
+            <div class="label"><span class="name">Corner style</span><span class="desc">How rounded the panel and cards are</span></div>
+            <div class="control"><div class="select"><select id="corners">
+              <option value="square">Square</option>
+              <option value="medium">Rounded</option>
+              <option value="round">Extra round</option>
+            </select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 12c2.5 0 3-8 6-8s3.5 8 6 8"/></svg></div>
+            <div class="label"><span class="name">Animations</span><span class="desc">Fade-in, smooth scrolling and hover effects</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="animations"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+        </div>
+
+        <h2>Display</h2>
+        <div class="cards">
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="5" width="3.5" height="6" rx=".8"/><rect x="6.25" y="5" width="3.5" height="6" rx=".8"/><rect x="11" y="5" width="3.5" height="6" rx=".8"/></svg></div>
+            <div class="label"><span class="name">Tabs in the switcher</span><span class="desc">Most recently used, from all windows. Auto shows as many as fit on your screen, recalculated every time; a number shows at most that many. Type to find the rest.</span></div>
+            <div class="control"><div class="select"><select id="maxTabs">
+              <option value="auto">Auto</option>
+              <option value="4">4</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+              <option value="12">12</option>
+              <option value="16">16</option>
+              <option value="20">20</option>
+            </select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="3" width="13" height="10" rx="1.5"/><path d="m3.5 11 3-3 2 2 1.5-1.5 2.5 2.5"/><circle cx="10.5" cy="6" r="1"/></svg></div>
+            <div class="label"><span class="name">Show previews</span><span class="desc">Thumbnail of each tab, taken when you visit it</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="showPreviews"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 6V2h4M14 10v4h-4M2 2l4.5 4.5M14 14l-4.5-4.5"/></svg></div>
+            <div class="label"><span class="name">Card size</span><span class="desc">Largest size of the tab cards</span></div>
+            <div class="control">
+              <input type="range" id="previewScale" min="70" max="150" step="10">
+              <span class="value" id="previewScaleValue">100%</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><path d="M2.5 13.5l11-11"/></svg></div>
+            <div class="label"><span class="name">Hide internal pages</span><span class="desc">Hide chrome://, edge://, brave://, about: and similar pages</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="hideInternalPages"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M2 5.5a1 1 0 0 1 1-1h2l1-1.5h4l1 1.5h2a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.5" r="2.4"/></svg></div>
+            <div class="label">
+              <span class="name">Capture all previews now</span>
+              <span class="desc">Quickly shows each open tab once to take its screenshot, then puts your tabs back exactly as they were. After that, previews are kept until you use a tab and refreshed every time you do. Press any switcher shortcut to stop.</span>
+              <div class="progress" id="captureProgress" hidden><div class="progress-bar" id="captureBar"></div></div>
+            </div>
+            <div class="control">
+              <span class="value" id="captureText"></span>
+              <button class="btn" id="captureAll">Capture all</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== Tab Search ===================== -->
+      <section class="section" id="tab-search">
+        <h1>Tab Search</h1>
+        <p class="lead">Find any open tab by its title or address.</p>
+
+        <div class="cards">
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M5 8h6"/></svg></div>
+            <div class="label"><span class="name">Search hotkey</span><span class="desc">On a page: search all windows. In the switcher (even while holding Alt): search this window.</span></div>
+            <div class="control"><div class="select"><select id="searchHotkey"></select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 5.5h13"/></svg></div>
+            <div class="label"><span class="name">Use the hotkey on web pages</span><span class="desc">When off, the hotkey only works inside the switcher</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="directSearch"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg></div>
+            <div class="label"><span class="name">Global search shortcut</span><span class="desc">Optional browser shortcut that also works when the address bar has focus</span></div>
+            <div class="control"><kbd class="shortcut-key" id="shortcutSearch" data-open-shortcuts title="Change on the extensions shortcuts page" role="button" tabindex="0">Not set</kbd><button class="btn" data-open-shortcuts>Change</button></div>
+          </div>
+        </div>
+        <p class="note">Tip: you can also just start typing while the switcher is open. Every word must appear in the title or the address.</p>
+      </section>
+
+      <!-- ===================== Bookmark Search ===================== -->
+      <section class="section" id="bookmark-search">
+        <h1>Bookmark Search</h1>
+        <p class="lead">Open any bookmark without digging through folders.</p>
+
+        <div class="cards">
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M5 8h6"/></svg></div>
+            <div class="label"><span class="name">Bookmark hotkey</span><span class="desc">Opens bookmark search; inside the switcher it switches to bookmarks</span></div>
+            <div class="control"><div class="select"><select id="bookmarksHotkey"></select></div></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 5.5h13"/></svg></div>
+            <div class="label"><span class="name">Use the hotkey on web pages</span><span class="desc">When off, the hotkey only works inside the switcher</span></div>
+            <div class="control"><label class="switch"><input type="checkbox" id="directBookmarks"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg></div>
+            <div class="label"><span class="name">Global bookmark shortcut</span><span class="desc">Optional browser shortcut that also works when the address bar has focus</span></div>
+            <div class="control"><kbd class="shortcut-key" id="shortcutBookmarks" data-open-shortcuts title="Change on the extensions shortcuts page" role="button" tabindex="0">Not set</kbd><button class="btn" data-open-shortcuts>Change</button></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.5l1.5 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg></div>
+            <div class="label"><span class="name">Folders</span><span class="desc">Bookmarks appear in the same order as your bookmark bar, and folders are cards you can open with Enter. Type the start of a folder name and press <kbd>Tab</kbd> to complete it (<kbd>/wo</kbd> → <kbd>/Work/</kbd>). <kbd>/Work/report</kbd> searches inside a folder.</span></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="settings.js"></script>
 </body>
 </html>
