@@ -1,6 +1,22 @@
 'use strict';
 
 const SETTINGS_KEY = 'tabSwitcherSettings';
+
+// Back to a fresh install: delete settings and everything stored locally
+// (previews, preview index, "setup done"), open the setup and close this tab.
+// Done here rather than in the background, so it works even if the background
+// is busy or still running older code. Keyboard shortcuts can't be reset by
+// an extension and are left as they are.
+async function resetExtension() {
+  await chrome.storage.sync.remove(SETTINGS_KEY);
+  await chrome.storage.local.clear();
+  // Let the background drop its in-memory copies too (fine if it doesn't answer).
+  chrome.runtime.sendMessage({ action: 'resetState' }).catch(() => {});
+  const me = await new Promise(resolve => chrome.tabs.getCurrent(resolve));
+  await chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html'), ...(me ? { index: me.index + 1, windowId: me.windowId } : {}) });
+  if (me) chrome.tabs.remove(me.id);
+  else window.close();
+}
 const DEFAULTS = {
   maxTabs: 'auto',
   showPreviews: true,
@@ -8,10 +24,10 @@ const DEFAULTS = {
   previewScale: 100,
   translucent: false,
   panelOpacity: 75,
-  blurBackground: false,
   dim: 'medium',
   corners: 'medium',
   animations: true,
+  previewRefresh: 30,
   hideInternalPages: false,
   theme: 'system',
   highlightColor: '#3b82f6',
@@ -51,9 +67,11 @@ function updatePreview(dark) {
   p.className = 'preview';
   p.classList.add(dark ? 'dark' : 'light', 'dim-' + settings.dim, 'corners-' + settings.corners);
   if (settings.translucent) p.classList.add('translucent');
-  if (settings.blurBackground) p.classList.add('blur-bg');
-  if (settings.animations) p.classList.add('anim');
+  if (settings.showHints === false) p.classList.add('no-hints');           // Show keyboard hints
+  if (settings.tabTitleLayout === 'footer') p.classList.add('title-bottom'); // Tab title position
   p.style.setProperty('--pv-alpha', settings.translucent ? String(settings.panelOpacity / 100) : '1');
+  const searchKey = p.querySelector('.pv-hints b:nth-child(4)');
+  if (searchKey) searchKey.textContent = settings.searchHotkey; // the hints show your real search key
   const row = $('opacityRow');
   if (row) row.classList.toggle('disabled', !settings.translucent); // opacity only matters when translucent
 }
@@ -70,10 +88,10 @@ function render() {
   $('translucent').checked = !!settings.translucent;
   $('panelOpacity').value = settings.panelOpacity;
   $('panelOpacityValue').textContent = `${settings.panelOpacity}%`;
-  $('blurBackground').checked = !!settings.blurBackground;
   $('dim').value = settings.dim;
   $('corners').value = settings.corners;
   $('animations').checked = settings.animations !== false;
+  $('previewRefresh').value = String([10, 30, 60].includes(Number(settings.previewRefresh)) ? Number(settings.previewRefresh) : 30);
   $('previewScale').value = settings.previewScale;
   $('previewScaleValue').textContent = `${settings.previewScale}%`;
   $('hideInternalPages').checked = !!settings.hideInternalPages;
@@ -123,9 +141,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   fillHotkeySelect($('bookmarksHotkey'));
 
   // Sidebar navigation
-  document.querySelectorAll('.nav-item').forEach(item => {
+  document.querySelectorAll('.nav-item[data-section]').forEach(item => {
     item.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i === item));
+      document.querySelectorAll('.nav-item[data-section]').forEach(i => i.classList.toggle('active', i === item));
       document.querySelectorAll('.section').forEach(s => s.classList.toggle('active', s.id === item.dataset.section));
     });
   });
@@ -143,6 +161,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const stored = (await chrome.storage.sync.get(SETTINGS_KEY))[SETTINGS_KEY] || {};
     settings = { ...DEFAULTS, ...stored };
     delete settings.tabSwitcherHotkey; // obsolete key from v0.1
+    // 16 / 20 were removed: anything not offered any more becomes Auto.
+    if (!['auto', 'auto2', 'auto3', '4', '6', '8', '10', '12'].includes(String(settings.maxTabs))) {
+      settings.maxTabs = 'auto';
+      chrome.storage.sync.set({ [SETTINGS_KEY]: settings }).catch(() => {});
+    }
     if (!HOTKEYS.includes(settings.searchHotkey)) settings.searchHotkey = DEFAULTS.searchHotkey;
     if (!HOTKEYS.includes(settings.bookmarksHotkey)) settings.bookmarksHotkey = DEFAULTS.bookmarksHotkey;
   } catch (_) { /* defaults */ }
@@ -164,10 +187,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     applyLook(); // live preview while dragging
   });
   $('panelOpacity').addEventListener('change', e => save({ panelOpacity: Number(e.target.value) }));
-  $('blurBackground').addEventListener('change', e => save({ blurBackground: e.target.checked }));
   $('dim').addEventListener('change', e => save({ dim: e.target.value }));
   $('corners').addEventListener('change', e => save({ corners: e.target.value }));
   $('animations').addEventListener('change', e => save({ animations: e.target.checked }));
+  $('previewRefresh').addEventListener('change', e => save({ previewRefresh: Number(e.target.value) }));
   $('hideInternalPages').addEventListener('change', e => save({ hideInternalPages: e.target.checked }));
   $('directSearch').addEventListener('change', e => save({ directSearch: e.target.checked }));
   $('directBookmarks').addEventListener('change', e => save({ directBookmarks: e.target.checked }));
@@ -205,6 +228,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     showCapture(msg.running ? msg : { running: false, done: lastTotal, total: lastTotal });
   });
   chrome.runtime.sendMessage({ action: 'captureAllStatus' }).then(s => s && s.running && showCapture(s)).catch(() => {});
+
+  // "Reset extension": ask first, then reset everything and open the setup.
+  const resetDescDefault = $('resetDesc').textContent;
+  const showResetIdle = () => {
+    $('resetRow').classList.remove('confirming');
+    $('resetDesc').textContent = resetDescDefault;
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.id = 'resetBtn';
+    btn.textContent = 'Reset…';
+    btn.addEventListener('click', showResetConfirm);
+    $('resetControls').replaceChildren(btn);
+  };
+  const showResetConfirm = () => {
+    $('resetRow').classList.add('confirming');
+    $('resetDesc').textContent = 'This deletes all your settings and saved previews, and opens the setup. Keyboard shortcuts stay as they are. This can\'t be undone.';
+    const cancel = document.createElement('button');
+    cancel.className = 'btn';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', showResetIdle);
+    const confirm = document.createElement('button');
+    confirm.className = 'btn danger';
+    confirm.textContent = 'Reset everything';
+    confirm.addEventListener('click', async () => {
+      confirm.disabled = cancel.disabled = true;
+      confirm.textContent = 'Resetting…';
+      try {
+        await resetExtension(); // this tab closes when it's done
+      } catch (err) {
+        console.error('Reset failed', err);
+        flash('Could not reset');
+        showResetIdle();
+      }
+    });
+    $('resetControls').replaceChildren(cancel, confirm);
+    cancel.focus();
+  };
+  $('resetBtn').addEventListener('click', showResetConfirm);
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyLook);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) loadShortcuts(); });

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Visual Tab Switcher",
+  "name": "Visual Tab Switcher: Tab Previews, Search & Bookmarks",
+  "short_name": "Visual Tab Switcher",
   "version": "0.2.0",
-  "description": "Switch tabs like Alt+Tab on Windows: visual previews, instant search and bookmark search.",
+  "description": "Press Alt+Q to switch tabs with live previews, F2 to search every open tab and F4 to browse bookmarks. All from the keyboard.",
   "permissions": [
     "tabs",
     "scripting",
@@ -59,7 +60,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["_favicon/*"],
+      "resources": ["ui.js", "_favicon/*"],
       "matches": ["<all_urls>"]
     }
   ]

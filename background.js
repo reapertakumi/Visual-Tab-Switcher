@@ -18,7 +18,8 @@ const SHOT_PREFIX = 's:';
 const MAX_SHOTS = 200;     // ~25 KB each → ~5 MB, well inside storage.local's 10 MB
 const THUMB_WIDTH = 480;
 const CAPTURE_GAP_MS = 550; // Chrome allows at most 2 captureVisibleTab calls per second
-const FRESH_MS = 3000;      // a preview younger than this is not retaken on Alt press
+const REFRESH_CHOICES = [10, 30, 60]; // Settings → "Refresh previews" (seconds); default 30
+const MEM_SHOTS = 60;       // previews kept in memory; the rest are read from storage on demand
 const MAX_MRU = 500;
 
 const mem = {
@@ -94,9 +95,24 @@ async function getSettings() {
   return mem.settings;
 }
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'sync' && changes[SETTINGS_KEY]) mem.settings = changes[SETTINGS_KEY].newValue || {};
+// Only settings (sync) matter here; we don't need to hear about our own preview writes.
+// A preview younger than this is not retaken when you return to a tab or
+// window, or press Alt on it (unless the page's address changed).
+function refreshMs() {
+  if (!mem.settings) getSettings(); // loads in the background; default until then
+  const sec = Number(mem.settings && mem.settings.previewRefresh);
+  return (REFRESH_CHOICES.includes(sec) ? sec : 30) * 1000;
+}
+
+chrome.storage.sync.onChanged.addListener(changes => {
+  if (changes[SETTINGS_KEY]) mem.settings = changes[SETTINGS_KEY].newValue || {};
 });
+
+function remember(tabId, dataUrl) {
+  mem.shots.delete(tabId);
+  mem.shots.set(tabId, dataUrl); // newest last
+  while (mem.shots.size > MEM_SHOTS) mem.shots.delete(mem.shots.keys().next().value);
+}
 
 // ---------------------------------------------------------------------------
 // MRU
@@ -215,7 +231,7 @@ async function doCapture(windowId, { force = false, attempt = 0, onlyTabId = nul
 
   try { dataUrl = await shrink(dataUrl); } catch (_) { /* keep original */ }
 
-  mem.shots.set(tab.id, dataUrl);
+  remember(tab.id, dataUrl);
   mem.index[tab.id] = [Date.now(), tab.url || ''];
   const removed = pruneShots();
   chrome.storage.local.set({ [SHOT_PREFIX + tab.id]: dataUrl, [INDEX_KEY]: mem.index }).catch(() => {});
@@ -347,7 +363,7 @@ async function getShots(tabIds) {
     const data = await chrome.storage.local.get(missing.map(id => SHOT_PREFIX + id)).catch(() => ({}));
     for (const id of missing) {
       const d = data[SHOT_PREFIX + id];
-      if (d) { mem.shots.set(id, d); out[id] = d; }
+      if (d) { remember(id, d); out[id] = d; }
     }
   }
   return out;
@@ -402,6 +418,17 @@ async function sendToTab(tabId, message) {
   try { return (await chrome.tabs.sendMessage(tabId, message)) ?? null; } catch (_) { return null; }
 }
 
+// The extension's own pages (setup, settings) load content.js themselves,
+// since Chrome doesn't run content scripts there. They're reached with
+// runtime messages addressed to their tab instead of tabs.sendMessage.
+const OWN_PAGES = chrome.runtime.getURL('');
+const isOwnPage = url => !!url && url.startsWith(OWN_PAGES);
+
+async function deliver(tab, message) {
+  if (!isOwnPage(tab.url)) return sendToTab(tab.id, message);
+  try { return (await chrome.runtime.sendMessage({ ...message, forTab: tab.id })) ?? null; } catch (_) { return null; }
+}
+
 async function injectContentScript(tabId) {
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
@@ -432,7 +459,7 @@ async function openSwitcher(direction, fromTab) {
 
   // Already open: just move the selection (no tab list needed).
   if (mem.overlayTabs.has(tab.id)) {
-    const r = await sendToTab(tab.id, { action: 'cycle', direction });
+    const r = await deliver(tab, { action: 'cycle', direction });
     if (r && r.handled) return;
   }
 
@@ -440,8 +467,8 @@ async function openSwitcher(direction, fromTab) {
   mem.lastShow.set(tab.id, Date.now()); // a capture running right now could include the overlay
   const tabs = await buildTabList(tab);
   const msg = { action: 'show', tabs, currentTabId: tab.id, currentWindowId: tab.windowId, direction };
-  let shown = await sendToTab(tab.id, msg);
-  if (!shown && (await injectContentScript(tab.id))) shown = await sendToTab(tab.id, msg);
+  let shown = await deliver(tab, msg);
+  if (!shown && !isOwnPage(tab.url) && (await injectContentScript(tab.id))) shown = await sendToTab(tab.id, msg);
   if (!shown) return quickSwitch(tab, tabs, direction); // page can't host the overlay (chrome://, Web Store…)
 }
 
@@ -455,8 +482,8 @@ async function openDirect(kind, fromTab) {
   const tab = await resolveTab(fromTab);
   if (!tab) return;
   const action = kind === 'bookmarks' ? 'openBookmarks' : 'openSearch';
-  const r = await sendToTab(tab.id, { action });
-  if (!r && (await injectContentScript(tab.id))) sendToTab(tab.id, { action });
+  const r = await deliver(tab, { action });
+  if (!r && !isOwnPage(tab.url) && (await injectContentScript(tab.id))) sendToTab(tab.id, { action });
 }
 
 chrome.commands.onCommand.addListener((command, tab) => {
@@ -531,6 +558,17 @@ const handlers = {
     await chrome.tabs.create(props);
     return { ok: true };
   },
+  // Settings → "Reset extension" has just deleted the stored data: drop the
+  // in-memory copies too, so old previews and settings aren't used any more.
+  async resetState() {
+    await ready;
+    if (mem.bulk) mem.bulk.stop = true;
+    mem.settings = null;
+    mem.index = {};
+    mem.shots.clear();
+    mem.lastShow.clear();
+    return { ok: true };
+  },
   // Settings → "Capture all previews now".
   captureAll() {
     captureAllTabs(); // runs in the background; progress arrives as captureProgress messages
@@ -547,7 +585,7 @@ const handlers = {
   // of the tab you're leaving while the page is still clean.
   prepare(msg, sender) {
     if (sender.tab && sender.tab.active) {
-      capture(sender.tab.windowId, { force: true, onlyTabId: sender.tab.id, ifOlderThan: FRESH_MS });
+      capture(sender.tab.windowId, { force: true, onlyTabId: sender.tab.id, ifOlderThan: refreshMs() });
     }
     return { ok: true };
   },
@@ -582,7 +620,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
   await ready;
   if (mem.bulk) return; // "capture all" is flipping through tabs: not real use
   touch(tabId);
-  scheduleCapture(windowId, 250);
+  scheduleCapture(windowId, 250, { ifOlderThan: refreshMs() });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
@@ -615,7 +653,7 @@ chrome.windows.onFocusChanged.addListener(async windowId => {
   if (mem.bulk) return;
   const [tab] = await chrome.tabs.query({ active: true, windowId }).catch(() => []);
   if (tab) touch(tab.id);
-  scheduleCapture(windowId, 400, { ifOlderThan: 10000 });
+  scheduleCapture(windowId, 400, { ifOlderThan: refreshMs() });
 });
 
 // ---------------------------------------------------------------------------
@@ -624,8 +662,28 @@ chrome.windows.onFocusChanged.addListener(async windowId => {
 
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
+// "1.10.0" vs "1.9" → compares number by number.
+function versionLess(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  }
+  return false;
+}
+
+// Versions before this one had no guided setup.
+const SETUP_SINCE = '0.2.0';
+
 chrome.runtime.onInstalled.addListener(async details => {
-  if (details.reason === 'install') chrome.runtime.openOptionsPage();
+  if (details.reason === 'install') {
+    // First install: open the guided setup instead of Settings.
+    chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
+  } else if (details.reason === 'update' && versionLess(details.previousVersion, SETUP_SINCE)) {
+    // Updating from a version that never had the setup: show it once, as "what's new".
+    const { setupDone } = await chrome.storage.local.get('setupDone').catch(() => ({}));
+    if (!setupDone) chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html?updated=1') });
+  }
   // Drop the old single-blob caches from previous versions.
   chrome.storage.local.remove(['tabScreenshotCacheV2', 'tabScreenshotCacheV3']).catch(() => {});
   chrome.storage.session.remove(['mruTabOrderV1', 'mruTabOrderV2']).catch(() => {});

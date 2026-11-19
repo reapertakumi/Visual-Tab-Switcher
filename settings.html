@@ -239,7 +239,6 @@
     .pv-lines i { display: block; height: 7px; width: 220px; border-radius: 4px; background: rgba(255,255,255,.75); }
     .pv-lines i:nth-child(2n) { width: 160px; }
     .pv-scrim { position: absolute; inset: 0; background: var(--pv-scrim); }
-    .preview.blur-bg .pv-scrim { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
     .pv-panel {
       position: relative; padding: 12px; border-radius: var(--r-panel);
       background: linear-gradient(180deg, rgba(var(--pv-surface-hi), var(--pv-alpha)), rgba(var(--pv-surface), var(--pv-alpha)) 40px);
@@ -247,9 +246,14 @@
     }
     .preview.translucent .pv-panel { -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); }
     .pv-cards { display: flex; gap: 8px; }
-    .pv-card { width: 112px; padding: 6px; border-radius: var(--r-card); }
+    .pv-card { display: flex; flex-direction: column; gap: 6px; width: 112px; padding: 6px; border-radius: var(--r-card); }
+    .preview.title-bottom .pv-card { flex-direction: column-reverse; } /* Tab title position: below preview */
+    .pv-hints { display: flex; justify-content: center; gap: 6px; margin-top: 9px; padding-top: 8px; border-top: 1px solid rgba(128,128,128,.22); }
+    .pv-hints b { font: 600 8px/1 "Segoe UI", system-ui, sans-serif; padding: 3px 5px; border-radius: 3px; color: var(--pv-text); opacity: .7;
+      border: 1px solid rgba(128,128,128,.35); border-bottom-width: 2px; }
+    .preview.no-hints .pv-hints { display: none; } /* Show keyboard hints: off */
     .pv-card.sel { background: rgba(128,128,128,.14); box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent); }
-    .pv-head { display: flex; align-items: center; gap: 6px; height: 14px; margin-bottom: 6px; }
+    .pv-head { display: flex; align-items: center; gap: 6px; height: 14px; }
     .pv-head b { width: 10px; height: 10px; border-radius: 3px; background: var(--pv-mute); }
     .pv-head span { height: 6px; width: 60px; border-radius: 3px; background: var(--pv-mute); }
     .pv-thumb { height: 64px; border-radius: var(--r-thumb); }
@@ -259,8 +263,6 @@
     .pv-caption { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 10px; }
     .pv-caption span { height: 7px; width: 120px; border-radius: 4px; background: var(--pv-text); opacity: .8; }
     .pv-caption i { height: 5px; width: 80px; border-radius: 3px; background: var(--pv-mute); }
-    .preview.anim .pv-card.sel { animation: pv-pulse 2.4s ease-in-out infinite; }
-    @keyframes pv-pulse { 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 7px color-mix(in srgb, var(--accent) 14%, transparent); } }
     .row.disabled { opacity: .5; }
     .row.disabled input { pointer-events: none; }
 
@@ -282,6 +284,10 @@
     }
     .btn:hover { background: var(--control-hover); }
     .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .btn.danger { background: #c42b1c; border-color: #c42b1c; color: #fff; font-weight: 600; }
+    .btn.danger:hover { background: #a32315; }
+    .row.confirming { border-color: rgba(196, 43, 28, .55); background: color-mix(in srgb, #c42b1c 8%, var(--card)); }
+    .row.confirming .row-icon { color: #c42b1c; }
 
     .keys {
       display: grid;
@@ -333,7 +339,11 @@
       <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"><path d="M4 1.8h8v12.4L8 11.2l-4 3z"/></svg>
       Bookmark Search
     </div>
-    <div class="sidebar-foot">
+    <a class="nav-item" href="welcome.html" id="runSetup" style="margin-top:auto;text-decoration:none">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8 9.6 6l4.4.3-3.4 2.8 1.1 4.3L8 11l-3.7 2.4 1.1-4.3L2 6.3 6.4 6z"/></svg>
+      Run setup again
+    </a>
+    <div class="sidebar-foot" style="margin-top:4px">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4.5"/></svg>
       <span>Changes save automatically</span>
       <span id="status" role="status"></span>
@@ -346,7 +356,7 @@
       <!-- ===================== Tab Switcher ===================== -->
       <section class="section active" id="general">
         <h1>Tab Switcher</h1>
-        <p class="lead">Works like Alt+Tab: hold the modifier, tap the key to move, release to switch.</p>
+        <p class="lead">Hold Alt, tap Q to move through your recent tabs, release Alt to switch.</p>
 
         <h2>Shortcuts</h2>
         <div class="cards">
@@ -380,7 +390,24 @@
         </div>
         <p class="note">Mouse: hovering a tab brightens it and shows its ✕ without changing the selection. Click to switch, click ✕ or middle-click to close, scroll the wheel to see more tabs.</p>
 
-        <h2>Appearance</h2>
+        <h2>Style</h2>
+        <!-- Live preview of the switcher with the current style settings -->
+        <div class="preview" id="stylePreview" aria-hidden="true">
+          <div class="pv-page">
+            <div class="pv-blob b1"></div><div class="pv-blob b2"></div><div class="pv-blob b3"></div>
+            <div class="pv-lines"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div class="pv-scrim"></div>
+          <div class="pv-panel">
+            <div class="pv-cards">
+              <div class="pv-card"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t1"></div></div>
+              <div class="pv-card sel"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t2"></div></div>
+              <div class="pv-card"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t3"></div></div>
+            </div>
+            <div class="pv-caption"><span></span><i></i></div>
+            <div class="pv-hints"><b>Release</b><b>Tab</b><b>← →</b><b>F2</b><b>Esc</b></div>
+          </div>
+        </div>
         <div class="cards">
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor"/></svg></div>
@@ -419,26 +446,6 @@
               <option value="footer">Below preview</option>
             </select></div></div>
           </div>
-        </div>
-
-        <h2>Style</h2>
-        <!-- Live preview of the switcher with the current style settings -->
-        <div class="preview" id="stylePreview" aria-hidden="true">
-          <div class="pv-page">
-            <div class="pv-blob b1"></div><div class="pv-blob b2"></div><div class="pv-blob b3"></div>
-            <div class="pv-lines"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          </div>
-          <div class="pv-scrim"></div>
-          <div class="pv-panel">
-            <div class="pv-cards">
-              <div class="pv-card"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t1"></div></div>
-              <div class="pv-card sel"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t2"></div></div>
-              <div class="pv-card"><div class="pv-head"><b></b><span></span></div><div class="pv-thumb t3"></div></div>
-            </div>
-            <div class="pv-caption"><span></span><i></i></div>
-          </div>
-        </div>
-        <div class="cards">
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 3v10M8 3v10M11 3v10" opacity=".45"/></svg></div>
             <div class="label"><span class="name">Translucent panel</span><span class="desc">See-through, blurred glass like Windows 11 and macOS. Uses a little more graphics power.</span></div>
@@ -451,11 +458,6 @@
               <input type="range" id="panelOpacity" min="30" max="100" step="5">
               <span class="value" id="panelOpacityValue">75%</span>
             </div>
-          </div>
-          <div class="row">
-            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 5h12M2 8h12M2 11h12" stroke-dasharray="1.5 2"/></svg></div>
-            <div class="label"><span class="name">Blur page behind</span><span class="desc">Softly blur the web page behind the switcher</span></div>
-            <div class="control"><label class="switch"><input type="checkbox" id="blurBackground"><span class="state"></span><span class="track"></span></label></div>
           </div>
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 1 0 12z" fill="currentColor" opacity=".5"/></svg></div>
@@ -478,7 +480,7 @@
           </div>
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 12c2.5 0 3-8 6-8s3.5 8 6 8"/></svg></div>
-            <div class="label"><span class="name">Animations</span><span class="desc">Fade-in, smooth scrolling and hover effects</span></div>
+            <div class="label"><span class="name">Animations</span><span class="desc">Fade-in, hover effects and smooth scrolling. When off, the switcher appears instantly and nothing moves.</span></div>
             <div class="control"><label class="switch"><input type="checkbox" id="animations"><span class="state"></span><span class="track"></span></label></div>
           </div>
         </div>
@@ -487,22 +489,31 @@
         <div class="cards">
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="5" width="3.5" height="6" rx=".8"/><rect x="6.25" y="5" width="3.5" height="6" rx=".8"/><rect x="11" y="5" width="3.5" height="6" rx=".8"/></svg></div>
-            <div class="label"><span class="name">Tabs in the switcher</span><span class="desc">Most recently used, from all windows. Auto shows as many as fit on your screen, recalculated every time; a number shows at most that many. Type to find the rest.</span></div>
+            <div class="label"><span class="name">Tabs in the switcher</span><span class="desc">Most recently used, from all windows. Auto fits as many as your screen allows in one row; Auto · 2 rows and Auto · 3 rows fill 2 or 3 rows (with smaller cards). A number shows at most that many. Press F2 to find the rest.</span></div>
             <div class="control"><div class="select"><select id="maxTabs">
               <option value="auto">Auto</option>
+              <option value="auto2">Auto · 2 rows</option>
+              <option value="auto3">Auto · 3 rows</option>
               <option value="4">4</option>
               <option value="6">6</option>
               <option value="8">8</option>
               <option value="10">10</option>
               <option value="12">12</option>
-              <option value="16">16</option>
-              <option value="20">20</option>
             </select></div></div>
           </div>
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="3" width="13" height="10" rx="1.5"/><path d="m3.5 11 3-3 2 2 1.5-1.5 2.5 2.5"/><circle cx="10.5" cy="6" r="1"/></svg></div>
             <div class="label"><span class="name">Show previews</span><span class="desc">Thumbnail of each tab, taken when you visit it</span></div>
             <div class="control"><label class="switch"><input type="checkbox" id="showPreviews"><span class="state"></span><span class="track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/></svg></div>
+            <div class="label"><span class="name">Refresh previews</span><span class="desc">When you come back to a tab, its preview is retaken if it's older than this. More often keeps previews more up to date, but takes more screenshots.</span></div>
+            <div class="control"><div class="select"><select id="previewRefresh">
+              <option value="10">Every 10 seconds</option>
+              <option value="30">Every 30 seconds</option>
+              <option value="60">Every minute</option>
+            </select></div></div>
           </div>
           <div class="row">
             <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2 6V2h4M14 10v4h-4M2 2l4.5 4.5M14 14l-4.5-4.5"/></svg></div>
@@ -527,6 +538,20 @@
             <div class="control">
               <span class="value" id="captureText"></span>
               <button class="btn" id="captureAll">Capture all</button>
+            </div>
+          </div>
+        </div>
+
+        <h2>Reset</h2>
+        <div class="cards">
+          <div class="row" id="resetRow">
+            <div class="row-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v3.6h3.6"/></svg></div>
+            <div class="label">
+              <span class="name">Reset extension</span>
+              <span class="desc" id="resetDesc">Go back to how it was on first install: all settings return to their defaults, saved previews are deleted and the setup opens again.</span>
+            </div>
+            <div class="control" id="resetControls">
+              <button class="btn" id="resetBtn">Reset…</button>
             </div>
           </div>
         </div>
@@ -589,5 +614,7 @@
   </main>
 
   <script src="settings.js"></script>
+  <!-- The switcher itself, so Alt+Q / F2 / F4 also work on this page -->
+  <script src="content.js"></script>
 </body>
 </html>

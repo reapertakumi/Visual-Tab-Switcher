@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to Visual Tab Switcher</title>
+  <style>
+    :root {
+      --accent: #3b82f6;
+      --bg: #f3f3f3;
+      --card: #ffffff;
+      --layer: rgba(0, 0, 0, .035);
+      --stroke: rgba(0, 0, 0, .08);
+      --stroke-hi: rgba(0, 0, 0, .16);
+      --text: #1a1a1a;
+      --text-2: rgba(0, 0, 0, .64);
+      --text-3: rgba(0, 0, 0, .45);
+      --good: #16a34a;
+      --shadow: 0 30px 80px rgba(0, 0, 0, .12), 0 2px 8px rgba(0, 0, 0, .06);
+    }
+    body.dark {
+      --bg: #1c1c1c;
+      --card: #272727;
+      --layer: rgba(255, 255, 255, .05);
+      --stroke: rgba(255, 255, 255, .08);
+      --stroke-hi: rgba(255, 255, 255, .18);
+      --text: #ffffff;
+      --text-2: rgba(255, 255, 255, .72);
+      --text-3: rgba(255, 255, 255, .5);
+      --good: #4ade80;
+      --shadow: 0 30px 80px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .3);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { color-scheme: light; } body.dark { color-scheme: dark; }
+    body {
+      min-height: 100vh; display: grid; place-items: center; padding: 32px 16px;
+      font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased; color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 60%),
+        radial-gradient(700px 500px at 110% 110%, color-mix(in srgb, #8b5cf6 16%, transparent), transparent 60%),
+        var(--bg);
+      transition: background-color .2s;
+    }
+    button { font: inherit; color: inherit; }
+
+    .shell { width: min(920px, 100%); background: var(--card); border: 1px solid var(--stroke); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+    .top { display: flex; align-items: center; gap: 12px; padding: 18px 28px; border-bottom: 1px solid var(--stroke); }
+    .top img { width: 28px; height: 28px; border-radius: 7px; }
+    .top b { font-size: 14px; }
+    .dots { margin-left: auto; display: flex; gap: 6px; }
+    .dots i { width: 8px; height: 8px; border-radius: 4px; background: var(--stroke-hi); transition: width .25s, background-color .25s; }
+    .dots i.on { width: 22px; background: var(--accent); }
+    .dots i.done { background: color-mix(in srgb, var(--accent) 50%, transparent); }
+
+    .body { padding: 40px 48px 32px; min-height: 470px; }
+    .step { display: none; }
+    .step.on { display: block; animation: enter .28s cubic-bezier(.16, 1, .3, 1); }
+    @keyframes enter { from { opacity: 0; transform: translateX(14px); } }
+    h1 { font-size: 30px; font-weight: 600; letter-spacing: -.015em; margin-bottom: 8px; }
+    .lead { font-size: 15px; color: var(--text-2); max-width: 620px; margin-bottom: 28px; }
+    .center { text-align: center; }
+    .center .lead { margin-left: auto; margin-right: auto; }
+
+    .foot { display: flex; align-items: center; gap: 10px; padding: 16px 28px; border-top: 1px solid var(--stroke); background: var(--layer); }
+    .foot .spacer { flex: 1; }
+    .btn { height: 34px; padding: 0 18px; border-radius: 6px; border: 1px solid var(--stroke-hi); background: var(--card); cursor: pointer; }
+    .btn:hover { background: var(--layer); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .btn.primary:hover { filter: brightness(1.08); }
+    .btn:focus-visible, .tile:focus-visible, .swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .link { background: none; border: 0; color: var(--text-3); cursor: pointer; padding: 6px 4px; }
+    .link:hover { color: var(--text); text-decoration: underline; }
+    [hidden] { display: none !important; }
+
+    /* ---- keycaps ---- */
+    kbd {
+      display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 28px; padding: 0 9px;
+      border-radius: 6px; font: 600 13px/1 "Segoe UI", system-ui, sans-serif; color: var(--text);
+      background: var(--card); border: 1px solid var(--stroke-hi); border-bottom-width: 3px;
+    }
+    kbd.big { min-width: 74px; height: 64px; font-size: 20px; border-radius: 12px; border-bottom-width: 5px; transition: transform .15s, background-color .15s, border-color .15s, color .15s; }
+    kbd.big.down { transform: translateY(3px); border-bottom-width: 2px; background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* ---- welcome hero ---- */
+    .hero-icon { width: 96px; height: 96px; border-radius: 24px; margin: 6px auto 22px; display: block; box-shadow: 0 16px 40px rgba(0, 0, 0, .25); }
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 30px; text-align: left; }
+    .feature { padding: 16px; border-radius: 10px; background: var(--layer); border: 1px solid var(--stroke); }
+    .feature kbd { margin-bottom: 10px; }
+    .feature b { display: block; margin-bottom: 2px; }
+    .feature span { color: var(--text-2); font-size: 13px; }
+
+    /* ---- try it ---- */
+    .sequence { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 10px 0 26px; }
+    .seq-step { text-align: center; color: var(--text-3); font-size: 13px; transition: color .2s; }
+    .seq-step.on { color: var(--text); }
+    .seq-step div { margin-top: 10px; }
+    .arrow { color: var(--text-3); font-size: 20px; margin-top: -24px; }
+    .tryit {
+      display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-radius: 10px;
+      border: 1px dashed var(--stroke-hi); background: var(--layer); margin-bottom: 14px;
+    }
+    .tryit .msg { flex: 1; }
+    .tryit .msg b { display: block; }
+    .tryit .msg span { color: var(--text-2); font-size: 13px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; color: var(--text-3); white-space: nowrap; }
+    .status i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; animation: pulse 1.6s ease-in-out infinite; }
+    .status.ok { color: var(--good); }
+    .status.ok i { animation: none; }
+    @keyframes pulse { 50% { opacity: .3; } }
+    .tryit.ok { border-style: solid; border-color: color-mix(in srgb, var(--good) 50%, transparent); background: color-mix(in srgb, var(--good) 8%, transparent); }
+    .row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 8px; background: var(--layer); border: 1px solid var(--stroke); margin-bottom: 8px; }
+    .row .label { flex: 1; }
+    .row .label span { display: block; font-size: 12.5px; color: var(--text-2); }
+    .note { font-size: 12.5px; color: var(--text-3); margin-top: 10px; }
+    .warn { color: #d97706; font-weight: 600; }
+
+    /* ---- search step ---- */
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .panel { padding: 18px; border-radius: 12px; background: var(--layer); border: 1px solid var(--stroke); }
+    .panel h3 { font-size: 15px; display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .panel p { color: var(--text-2); font-size: 13px; margin-bottom: 14px; }
+    .panel .ctl { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 13px; }
+    select {
+      appearance: none; font: inherit; color: var(--text); height: 30px; padding: 0 30px 0 10px; border-radius: 5px; cursor: pointer;
+      border: 1px solid var(--stroke-hi); background: var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' fill='none' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;
+    }
+
+    /* switch */
+    .switch { display: inline-flex; align-items: center; cursor: pointer; }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .track { position: relative; width: 40px; height: 20px; border-radius: 10px; border: 1px solid var(--text-2); transition: background-color .12s, border-color .12s; }
+    .track::after { content: ""; position: absolute; left: 3px; top: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-2); transition: transform .16s cubic-bezier(.16, 1, .3, 1), background-color .12s; }
+    .switch input:checked + .track { background: var(--accent); border-color: var(--accent); }
+    .switch input:checked + .track::after { background: #fff; transform: translateX(20px); }
+    .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ---- personalize ---- */
+    .personal { display: grid; grid-template-columns: 1fr 330px; gap: 28px; align-items: start; }
+    .group-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); margin: 0 0 8px; }
+    .group + .group { margin-top: 20px; }
+    .tiles { display: flex; gap: 10px; }
+    .tile {
+      flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--stroke-hi); background: var(--card); cursor: pointer; text-align: center; font-size: 12.5px;
+    }
+    .tile:hover { background: var(--layer); }
+    .tile.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .tile .art { height: 44px; border-radius: 6px; margin-bottom: 8px; display: grid; place-items: center; overflow: hidden; }
+    .art.sys { background: linear-gradient(90deg, #f3f3f3 50%, #202020 50%); }
+    .art.light { background: #f3f3f3; border: 1px solid rgba(0, 0, 0, .08); }
+    .art.dark { background: #202020; }
+    .art .mini { display: grid; gap: 3px; }
+    .art .mini i { display: block; width: 14px; height: 9px; border-radius: 2px; background: var(--accent); opacity: .75; }
+    .art.rows { background: var(--layer); }
+    .swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+    .swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12); }
+    .swatch.on { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px currentColor; }
+
+    /* live preview (mirrors the switcher's look) */
+    .pv { position: sticky; top: 0; border-radius: 12px; overflow: hidden; height: 300px; display: grid; place-items: center; border: 1px solid var(--stroke);
+      background: linear-gradient(135deg, #1e3a8a, #7c3aed 45%, #db2777 80%, #f59e0b); }
+    .pv::before { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, .3); }
+    .pv-panel { position: relative; padding: 10px; border-radius: 14px; background: rgba(var(--pv-bg), var(--pv-a, 1));
+      border: 1px solid rgba(255, 255, 255, .12); box-shadow: 0 18px 40px rgba(0, 0, 0, .45); transition: background-color .2s; }
+    .pv.translucent .pv-panel { -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%); }
+    .pv-grid { display: grid; grid-template-columns: repeat(3, 76px); gap: 6px; }
+    .pv-card { padding: 4px; border-radius: 8px; }
+    .pv-card.sel { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); background: rgba(128, 128, 128, .14); }
+    .pv-card b { display: block; height: 5px; width: 60%; border-radius: 3px; background: var(--pv-mute); margin: 1px 0 4px; }
+    .pv-card i { display: block; height: 42px; border-radius: 5px; }
+    .pv-caption { height: 6px; width: 110px; margin: 10px auto 0; border-radius: 3px; background: var(--pv-mute); }
+
+    /* ---- previews step ---- */
+    .progress { height: 6px; border-radius: 3px; background: var(--stroke-hi); overflow: hidden; margin-top: 12px; }
+    .progress div { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .25s; }
+
+    /* ---- done ---- */
+    .summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-width: 620px; margin: 0 auto; text-align: left; }
+    .summary div { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 8px; background: var(--layer); border: 1px solid var(--stroke); }
+    .summary span { color: var(--text-2); font-size: 13px; }
+    .check { width: 64px; height: 64px; margin: 0 auto 18px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+
+    @media (max-width: 760px) {
+      .body { padding: 28px 20px; }
+      .features, .two, .personal, .summary { grid-template-columns: 1fr; }
+      .pv { position: relative; }
+    }
+    @media (prefers-reduced-motion: reduce) { .step.on { animation: none; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="top">
+      <img src="icons/icon48.png" alt="">
+      <b>Visual Tab Switcher</b>
+      <div class="dots" id="dots" aria-hidden="true"></div>
+    </div>
+
+    <div class="body">
+      <!-- 1. Welcome -->
+      <section class="step center" data-step="welcome">
+        <img class="hero-icon" src="icons/icon128.png" alt="">
+        <h1 id="welcomeTitle">Welcome to Visual Tab Switcher</h1>
+        <p class="lead" id="welcomeLead">See all your tabs at a glance and jump to any of them in a keystroke. Let's set it up together. It takes about a minute.</p>
+        <div class="features">
+          <div class="feature"><kbd>Alt+Q</kbd><b>Switch tabs</b><span>Live previews of your recent tabs, from every window.</span></div>
+          <div class="feature"><kbd>F2</kbd><b>Search tabs</b><span>Type a few letters to find any open tab.</span></div>
+          <div class="feature"><kbd>F4</kbd><b>Search bookmarks</b><span>Browse your bookmarks, folder by folder.</span></div>
+        </div>
+      </section>
+
+      <!-- 2. Try the switcher -->
+      <section class="step" data-step="switch">
+        <h1>Switch tabs with Alt+Q</h1>
+        <p class="lead">Hold <kbd>Alt</kbd> and tap <kbd>Q</kbd> to see your recent tabs. While holding Alt, tap Q again to move to the next one. Let go of Alt to switch.</p>
+        <div class="sequence" aria-hidden="true">
+          <div class="seq-step" id="seq1"><kbd class="big" id="capAlt">Alt</kbd><div>Hold Alt</div></div>
+          <div class="arrow">→</div>
+          <div class="seq-step" id="seq2"><kbd class="big" id="capQ">Q</kbd><div>Tap Q to move</div></div>
+          <div class="arrow">→</div>
+          <div class="seq-step" id="seq3"><kbd class="big" id="capRel">Alt</kbd><div>Release to switch</div></div>
+        </div>
+        <div class="tryit" id="trySwitch">
+          <div class="msg">
+            <b>Try it now: press <span id="shortcutInline">Alt+Q</span></b>
+            <span>Press <kbd>Esc</kbd> to stay on this page. If you do switch, a quick Alt+Q tap brings you right back.</span>
+          </div>
+          <div class="status" id="trySwitchStatus"><i></i><span>Waiting…</span></div>
+        </div>
+        <div class="row">
+          <div class="label"><b>Your shortcut</b><span id="shortcutHint">Open the switcher / next tab</span></div>
+          <kbd id="shortcutKey">Alt+Q</kbd>
+          <button class="btn" data-open-shortcuts>Change</button>
+        </div>
+      </section>
+
+      <!-- 3. Search -->
+      <section class="step" data-step="search">
+        <h1>Find tabs and bookmarks</h1>
+        <p class="lead">Press a key and start typing. Every word you type is matched against titles and addresses.</p>
+        <div class="two">
+          <div class="panel">
+            <h3><kbd id="searchKeyCap">F2</kbd> Tab search</h3>
+            <p>Searches every open tab in all windows. From the Alt+Q switcher, it searches just the current window.</p>
+            <div class="ctl"><span>Key</span><select id="searchHotkey"></select></div>
+            <div class="ctl"><span>Works on any page</span><label class="switch"><input type="checkbox" id="directSearch"><span class="track"></span></label></div>
+          </div>
+          <div class="panel">
+            <h3><kbd id="bookmarksKeyCap">F4</kbd> Bookmark search</h3>
+            <p>Shows your bookmarks in bookmark-bar order. Type the start of a folder name and press Tab to open it.</p>
+            <div class="ctl"><span>Key</span><select id="bookmarksHotkey"></select></div>
+            <div class="ctl"><span>Works on any page</span><label class="switch"><input type="checkbox" id="directBookmarks"><span class="track"></span></label></div>
+          </div>
+        </div>
+        <div class="tryit" id="trySearch" style="margin-top:14px">
+          <div class="msg"><b>Try it: press <span id="searchKeyInline">F2</span> or <span id="bookmarksKeyInline">F4</span></b><span>Press Esc to close it again.</span></div>
+          <div class="status" id="trySearchStatus"><i></i><span>Waiting…</span></div>
+        </div>
+      </section>
+
+      <!-- 4. Personalize -->
+      <section class="step" data-step="style">
+        <h1>Make it yours</h1>
+        <p class="lead">Pick a look. You can change all of this later in Settings.</p>
+        <div class="personal">
+          <div>
+            <div class="group">
+              <div class="group-title">Theme</div>
+              <div class="tiles" data-setting="theme">
+                <button class="tile" data-value="system"><div class="art sys"></div>System</button>
+                <button class="tile" data-value="light"><div class="art light"></div>Light</button>
+                <button class="tile" data-value="dark"><div class="art dark"></div>Dark</button>
+              </div>
+            </div>
+            <div class="group">
+              <div class="group-title">Accent color</div>
+              <div class="swatches" id="swatches"></div>
+            </div>
+            <div class="group">
+              <div class="group-title">Alt+Q layout</div>
+              <div class="tiles" data-setting="maxTabs">
+                <button class="tile" data-value="auto"><div class="art rows"><div class="mini" style="grid-template-columns:repeat(4,14px)"><i></i><i></i><i></i><i></i></div></div>One row</button>
+                <button class="tile" data-value="auto2"><div class="art rows"><div class="mini" style="grid-template-columns:repeat(4,14px)"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>Two rows</button>
+                <button class="tile" data-value="auto3"><div class="art rows"><div class="mini" style="grid-template-columns:repeat(4,14px);gap:2px"><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i><i style="height:7px"></i></div></div>Three rows</button>
+              </div>
+            </div>
+            <div class="group">
+              <div class="row" style="margin:0">
+                <div class="label"><b>Translucent panel</b><span>Frosted glass, like Windows 11 and macOS</span></div>
+                <label class="switch"><input type="checkbox" id="translucent"><span class="track"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="pv" id="pv" aria-hidden="true">
+            <div class="pv-panel">
+              <div class="pv-grid" id="pvGrid"></div>
+              <div class="pv-caption"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. Previews -->
+      <section class="step" data-step="previews">
+        <h1>Tab previews</h1>
+        <p class="lead">Each tab's preview is taken when you visit it and kept only on your computer. Tabs you haven't opened since starting the browser don't have one yet: you can capture them all now.</p>
+        <div class="row">
+          <div class="label"><b>Show previews</b><span>Thumbnails of your tabs in the switcher</span></div>
+          <label class="switch"><input type="checkbox" id="showPreviews"><span class="track"></span></label>
+        </div>
+        <div class="row" style="align-items:flex-start">
+          <div class="label">
+            <b>Capture all previews now</b>
+            <span>Quickly shows each open tab once to take its picture, then brings you back here with everything as it was.</span>
+            <div class="progress" id="capProgress" hidden><div id="capBar"></div></div>
+          </div>
+          <span class="status" id="capText"></span>
+          <button class="btn" id="capBtn">Capture all</button>
+        </div>
+        <p class="note">You can skip this. Previews fill in by themselves as you use your tabs.</p>
+      </section>
+
+      <!-- 6. Done -->
+      <section class="step center" data-step="done">
+        <div class="check"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4.5"/></svg></div>
+        <h1>You're all set</h1>
+        <p class="lead">Here's everything you need. Find it again anytime in Settings: click the extension's icon.</p>
+        <div class="summary">
+          <div><kbd id="sumSwitch">Alt+Q</kbd><span>Open the switcher</span></div>
+          <div><kbd>Release Alt</kbd><span>Switch to the selected tab</span></div>
+          <div><kbd id="sumSearch">F2</kbd><span>Search tabs</span></div>
+          <div><kbd id="sumBookmarks">F4</kbd><span>Search bookmarks</span></div>
+          <div><kbd>← →</kbd><span>Move the selection</span></div>
+          <div><kbd>Delete</kbd><span>Close the selected tab</span></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="foot">
+      <button class="link" id="skip">Skip setup</button>
+      <div class="spacer"></div>
+      <button class="btn" id="back">Back</button>
+      <button class="btn" id="openSettings" hidden>Open settings</button>
+      <button class="btn primary" id="next">Get started</button>
+    </div>
+  </div>
+
+  <script src="welcome.js"></script>
+  <!-- The real switcher, so Alt+Q / F2 / F4 can be tried right here -->
+  <script src="content.js"></script>
+</body>
+</html>
